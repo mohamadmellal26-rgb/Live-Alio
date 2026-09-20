@@ -66,7 +66,6 @@ export const HeroSection: React.FC = () => {
     }
   };
 
-  // ربط الفيديو المحلي بعد التحميل
   useEffect(() => {
     startLocalCamera();
 
@@ -75,7 +74,6 @@ export const HeroSection: React.FC = () => {
     };
   }, []);
 
-  // ربط الفيديو البعيد تلقائياً بـ DOM بمجرد تحول isConnected إلى true
   useEffect(() => {
     if (isConnected && remoteVideoRef.current && remoteStreamRef.current) {
       remoteVideoRef.current.srcObject = remoteStreamRef.current;
@@ -120,7 +118,8 @@ export const HeroSection: React.FC = () => {
     setIsMatching(true);
 
     const backendRole = selectedRole === 'creators' ? 'youtuber' : 'all';
-    const wsUrl = `wss://afford-unbridle-apprehend.ngrok-free.dev/ws/live?role=${backendRole}`;
+    // تم تحديث الرابط هنا ليطابق سيرفر Render الجديد
+    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${backendRole}`;
     
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -199,7 +198,6 @@ export const HeroSection: React.FC = () => {
     peerConnectionRef.current = pc;
     pendingCandidatesRef.current = [];
 
-    // تهيئة البث البعيد
     remoteStreamRef.current = new MediaStream();
 
     if (localStreamRef.current) {

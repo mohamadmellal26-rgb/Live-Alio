@@ -15,7 +15,8 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const API_BASE_URL = 'http://localhost:8080/api/v1';
+  // تم تحديث رابط الـ API ليوجه إلى سيرفر Render بدلاً من localhost
+  const API_BASE_URL = 'https://live-alio.onrender.com/api/v1';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,7 +45,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
 
-      // الاتصال بالـ WebSocket (اختياري حسب الحاجة)
+      // الاتصال بالـ WebSocket باستخدام رابط Render
       connectWebSocket(data.token);
 
       // الانتقال مباشرة إلى الصفحة الرئيسية (/)
@@ -64,7 +65,8 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
   };
 
   const connectWebSocket = (token: string) => {
-    const ws = new WebSocket(`ws://localhost:8080/ws/live?role=youtuber&token=${token}`);
+    // تحديث رابط الـ WebSocket ليتوافق مع سيرفر Render (wss)
+    const ws = new WebSocket(`wss://live-alio.onrender.com/ws/live?role=youtuber&token=${token}`);
 
     ws.onopen = () => {
       console.log('Connected to WebSocket server');
