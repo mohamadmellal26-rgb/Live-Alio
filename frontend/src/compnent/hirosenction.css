@@ -1,0 +1,399 @@
+/* hirosenction.css - Random Live Chat & Creators Styling (Matching Header Font) */
+
+.hero-section {
+  width: 100%;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  color: #ffffff;
+  background-color: #0d0d0d;
+  /* تطبيق نفس خط الهدر */
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-sizing: border-box;
+}
+
+/* Breadcrumb Styling */
+.hero-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #a1a1aa;
+  margin-bottom: 2rem;
+}
+
+.breadcrumb-separator {
+  color: #52525b;
+}
+
+.breadcrumb-current {
+  color: #ffffff;
+}
+
+/* Header Text Styling */
+.hero-header-content {
+  text-align: center;
+  max-width: 54rem;
+  margin: 0 auto 3.5rem;
+}
+
+.hero-title {
+  font-size: 2.3rem;
+  font-weight: 800;
+  color: #ffffff;
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+.hero-description {
+  font-size: 0.95rem;
+  line-height: 1.75;
+  color: #a1a1aa;
+  font-weight: 400;
+}
+
+/* Grid Layout */
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (min-width: 900px) {
+  .hero-grid {
+    grid-template-columns: 340px 1fr;
+    max-width: 60rem;
+    margin: 0 auto;
+  }
+}
+
+/* Left Card: Live Stream Preview */
+.hero-preview-card {
+  position: relative;
+  width: 100%;
+  height: 420px;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+  border: 1px solid #27272a;
+}
+
+.preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.live-status-badge {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  color: #ff22ff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.35rem 0.75rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid rgba(255, 34, 255, 0.3);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #ff22ff;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #ff22ff;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.preview-overlay-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 60%, transparent 100%);
+  color: #ffffff;
+  text-align: center;
+  padding: 1.5rem 1rem;
+}
+
+.preview-overlay-text h2 {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+  margin: 0;
+  color: #ff22ff;
+}
+
+.preview-overlay-text p {
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
+  font-weight: 600;
+  margin: 0.4rem 0 1rem;
+  color: #e4e4e7;
+}
+
+.preview-tag {
+  font-size: 0.725rem;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  padding: 0.35rem 0.75rem;
+  border-radius: 9999px;
+  color: #ffffff;
+}
+
+/* Right Card: Match Action Container */
+.hero-upload-card {
+  background-color: #141416;
+  border: 1px solid #27272a;
+  border-radius: 20px;
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
+}
+
+/* Badge Indicator & Live Stats */
+.ai-enhance-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.75rem;
+}
+
+.live-stats-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.stat-pill {
+  font-size: 0.75rem;
+  color: #a1a1aa;
+  background: #1e1e24;
+  padding: 0.25rem 0.65rem;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.badge-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: #ffffff;
+}
+
+.sparkle-icon {
+  color: #ff22ff;
+}
+
+/* Interactive Zone */
+.match-interactive-zone {
+  width: 100%;
+  border: 2px dashed #27272a;
+  border-radius: 14px;
+  padding: 2.5rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  background-color: #0d0d0f;
+}
+
+/* Role Selector Tabs */
+.role-selector {
+  display: flex;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 9999px;
+  padding: 3px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.role-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #a1a1aa;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.5rem;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  font-family: inherit; /* لضمان توريث خط الهدر */
+}
+
+.role-btn.active {
+  background: #ff22ff;
+  color: #000000;
+  font-weight: 700;
+}
+
+.btn-start-match {
+  background-color: #ff22ff;
+  color: #000000;
+  border: none;
+  border-radius: 9999px;
+  padding: 0.85rem 2rem;
+  font-size: 1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+  box-shadow: 0 4px 20px rgba(255, 34, 255, 0.3);
+  font-family: inherit; /* لضمان توريث خط الهدر */
+}
+
+.btn-start-match:hover {
+  opacity: 0.9;
+  transform: scale(1.03);
+}
+
+.dropzone-text {
+  font-size: 0.85rem;
+  color: #a1a1aa;
+  margin: 0;
+  text-align: center;
+}
+
+/* Terms Link */
+.upload-terms {
+  font-size: 0.75rem;
+  color: #71717a;
+  margin-top: 1.75rem;
+  text-align: center;
+}
+
+.terms-link {
+  color: #e879f9;
+  text-decoration: underline;
+  transition: color 0.15s ease;
+}
+
+.terms-link:hover {
+  color: #ff22ff;
+}
+/* ==========================================
+   تنسيق أزرار التحكم - متوافق مع ألوان المنصة (#ff22ff)
+   ========================================== */
+
+/* حاوية التحكم بالأزرار */
+.live-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 15px;
+}
+
+/* التنسيق الأساسي للأزرار */
+.btn-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 9999px; /* جعل الأزرار دائرية الحواف متناسقة مع باقي الموقع */
+  border: 1px solid #27272a;
+  background: #18181b;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  outline: none;
+  font-family: inherit;
+}
+
+.btn-control:hover {
+  background: #27272a;
+  border-color: rgba(255, 34, 255, 0.4);
+  transform: translateY(-2px);
+}
+
+.btn-control:active {
+  transform: translateY(0);
+}
+
+/* زر التخطي Next Person - بلون النيون الوردي للمنصة */
+.skip-btn {
+  flex: 1;
+  background: #ff22ff;
+  color: #000000;
+  border: none;
+  font-weight: 700;
+  box-shadow: 0 4px 15px rgba(255, 34, 255, 0.35);
+}
+
+.skip-btn:hover {
+  opacity: 0.9;
+  box-shadow: 0 6px 20px rgba(255, 34, 255, 0.5);
+  border-color: transparent;
+}
+
+/* أزرار الأيقونات (الصوت والفيديو) */
+.icon-btn {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 50%; /* شكل دائري كاملاً للملاءمة */
+  flex-shrink: 0;
+}
+
+/* حالة إلغاء تفعيل الصوت أو الفيديو (Disabled Mute) */
+.icon-btn.disabled {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.icon-btn.disabled:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+}
+
+/* زر إنهاء المكالمة Stop */
+.stop-btn {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  background: #ef4444;
+  color: #ffffff;
+  border: none;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.stop-btn:hover {
+  background: #dc2626;
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.5);
+  transform: translateY(-2px);
+}

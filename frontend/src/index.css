@@ -1,0 +1,8 @@
+html, body {
+  /* يمنع التأثير الارتدادي وتأثير Pull-to-Refresh */
+  overscroll-behavior-y: none;
+  overscroll-behavior-x: none;
+}
+a {
+  text-decoration: none;
+}

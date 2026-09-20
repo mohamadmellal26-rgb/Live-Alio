@@ -1,0 +1,581 @@
+/* Header.css - Aleo & Picsart Navigation Styling */
+
+/* Base Header Layout */
+.aleo-header {
+  width: 100%;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #ffffff;
+}
+
+/* ========================================================= */
+/* 1. Top Announcement Banner */
+/* ========================================================= */
+.top-banner {
+  background-color: #ff22ff;
+  color: #000000;
+  padding: 1.5vh 2.5rem; 
+  min-height: 5vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  width: 100%;
+}
+
+.countdown-timer {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.timer-box {
+  background-color: #000000;
+  color: #ffffff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.timer-colon {
+  color: #000000;
+  font-weight: 700;
+}
+
+.banner-text {
+  color: #000000;
+  font-weight: 500;
+}
+
+.banner-highlight {
+  color: #000000;
+  font-weight: 700;
+  margin-left: 0.5rem;
+}
+
+.btn-participate {
+  background-color: #000000;
+  color: #ffffff;
+  padding: 0.35rem 1.25rem;
+  border-radius: 9999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  margin-left: 0.5rem;
+}
+
+.btn-participate:hover {
+  opacity: 0.85;
+}
+
+@media (max-width: 768px) {
+  .banner-highlight {
+    display: none;
+  }
+}
+
+/* ========================================================= */
+/* 2. Main Navigation Bar */
+/* ========================================================= */
+.main-nav {
+  background-color: #101010;
+  border-bottom: 1px solid #1a1a1a;
+  padding: 0.85rem 2rem;
+  position: relative;
+}
+
+.nav-container {
+  max-width: 90rem;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-left-group {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+/* Logo Style */
+.picsart-logo {
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+}
+
+.logo-brand {
+  font-size: 1.85rem;
+  font-weight: 800;
+  color: #ff22ff;
+  letter-spacing: -0.02em;
+}
+
+/* Desktop Links */
+.desktop-menu {
+  display: none;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+@media (min-width: 1024px) {
+  .desktop-menu {
+    display: flex;
+  }
+}
+
+.nav-item-dropdown {
+  position: relative;
+}
+
+.dropdown-trigger {
+  background: none;
+  border: none;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.dropdown-trigger:hover {
+  opacity: 0.8;
+}
+
+.chevron-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  color: #ffffff;
+  transition: transform 0.2s ease;
+}
+
+.nav-item-dropdown:hover .chevron-icon {
+  transform: rotate(180deg);
+}
+
+/* Dropdown Menu */
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.5rem;
+  background-color: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 0.75rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+  padding: 0.5rem;
+  z-index: 50;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(10px);
+  transition: all 0.2s ease-in-out;
+  pointer-events: none;
+}
+
+.dropdown-menu.w-64 { 
+  width: 16rem; 
+}
+
+.nav-item-dropdown:hover .dropdown-menu,
+.dropdown-menu:hover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.dropdown-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.625rem;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  color: #ffffff;
+}
+
+.dropdown-link:hover {
+  background-color: #27272a;
+}
+
+.dropdown-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.dropdown-desc {
+  color: #a1a1aa;
+  font-size: 0.75rem;
+}
+
+/* Pricing Badge link */
+.nav-link-badge {
+  color: #ffffff;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.badge-save-purple {
+  background-color: #3b0764;
+  color: #e879f9;
+  font-size: 0.725rem;
+  font-weight: 700;
+  padding: 0.15rem 0.6rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(232, 121, 249, 0.3);
+}
+
+/* ========================================================= */
+/* 3. Desktop Actions & Search Bar */
+/* ========================================================= */
+.desktop-actions {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  position: relative;
+}
+
+@media (min-width: 1024px) {
+  .desktop-actions {
+    display: flex;
+  }
+}
+
+.search-box-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.picsart-search-bar {
+  display: flex;
+  align-items: center;
+  background-color: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 6px 10px;
+  width: 200px;
+  position: relative;
+  transition: width 0.2s ease, border-color 0.2s ease;
+}
+
+.picsart-search-bar.opening {
+  animation: searchBarFadeIn 0.2s ease forwards;
+}
+
+.picsart-search-bar.closing {
+  animation: searchBarFadeOut 0.2s ease forwards;
+}
+
+.picsart-search-bar:focus-within {
+  width: 240px;
+  border-color: rgba(255, 34, 255, 0.6);
+}
+
+.search-input-icon {
+  color: #aaa;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.search-input {
+  background: transparent;
+  border: none;
+  color: #fff;
+  outline: none;
+  font-size: 13px;
+  width: 100%;
+  min-width: 0;
+}
+
+.btn-icon-search {
+  background: none;
+  border: none;
+  padding: 0.5rem;
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-action-icon {
+  background: none;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+  padding: 0 0 0 8px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+  position: relative;
+  margin-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.btn-action-icon:hover {
+  color: #fff;
+}
+
+.btn-close-search {
+  color: #fff;
+  margin-left: 2px;
+}
+
+/* Trending Search Dropdown Popover */
+.trending-search-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  background: #121214;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+  transform-origin: top right;
+}
+
+.trending-search-popover.opening {
+  animation: popoverFadeIn 0.2s ease forwards;
+}
+
+.trending-search-popover.closing {
+  animation: popoverFadeOut 0.2s ease forwards;
+}
+
+/* Keyframes لأنيميشن الفتح والإغلاق */
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes popoverFadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+}
+
+@keyframes searchBarFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes searchBarFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.trending-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.trending-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.trending-tag {
+  background: #1e1e24;
+  border-radius: 6px;
+  padding: 6px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 11px;
+  color: #ddd;
+  transition: background 0.2s ease;
+}
+
+.trending-tag:hover {
+  background: #2a2a32;
+  color: #fff;
+}
+
+/* Action Buttons */
+.btn-start-create {
+  background-color: #ff22ff;
+  color: #000000;
+  font-weight: 700;
+  padding: 0.6rem 1.6rem;
+  border-radius: 9999px;
+  font-size: 0.95rem;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-start-create:hover {
+  opacity: 0.9;
+  transform: scale(1.02);
+}
+
+.btn-login-outline {
+  background: transparent;
+  border: 2px solid #ff22ff;
+  color: #ff22ff;
+  font-weight: 700;
+  padding: 0.55rem 1.5rem;
+  border-radius: 9999px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-login-outline:hover {
+  background-color: rgba(255, 34, 255, 0.1);
+}
+
+/* ========================================================= */
+/* 4. Mobile Controls & Drawer */
+/* ========================================================= */
+.mobile-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+@media (min-width: 1024px) {
+  .mobile-controls {
+    display: none;
+  }
+}
+
+.mobile-search-bar {
+  display: flex;
+  align-items: center;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 4px 8px;
+  margin-right: 4px;
+}
+
+.mobile-search-bar.opening {
+  animation: searchBarFadeIn 0.2s ease forwards;
+}
+
+.mobile-search-bar.closing {
+  animation: searchBarFadeOut 0.2s ease forwards;
+}
+
+.mobile-search-input {
+  background: transparent;
+  border: none;
+  color: #fff;
+  outline: none;
+  font-size: 13px;
+  width: 110px;
+}
+
+.btn-mobile-toggle {
+  background-color: #27272a;
+  border: none;
+  color: #ffffff;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+.mobile-drawer {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  background-color: #101010;
+  border-bottom: 1px solid #27272a;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  z-index: 50;
+}
+
+.mobile-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.mobile-link {
+  padding: 0.5rem;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.mobile-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #27272a;
+}
+
+.btn-full {
+  width: 100%;
+  text-align: center;
+}
+
+/* ========================================================= */
+/* 5. Utility Classes */
+/* ========================================================= */
+.icon-yellow { color: #eab308; }
+.icon-blue { color: #3b82f6; }
+.icon-green { color: #22c55e; }
+.icon-purple { color: #a855f7; }
+.icon-cyan { color: #06b6d4; }
+.icon-orange { color: #f97316; }
+.icon-red { color: #ef4444; }
+.icon-emerald { color: #10b981; }
+.icon-flame { color: #ef4444; }
