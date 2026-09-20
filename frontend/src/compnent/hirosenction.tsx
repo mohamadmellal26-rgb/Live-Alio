@@ -16,7 +16,9 @@ export const HeroSection: React.FC = () => {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
-  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // التصحيح هنا: استخدام ReturnType<typeof setInterval> بدلاً من NodeJS.Timeout
+  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
 
@@ -132,7 +134,6 @@ export const HeroSection: React.FC = () => {
     ws.onopen = () => {
       console.log("Connected to signaling server");
       
-      // إرسال Ping كل 25 ثانية لمنع السيرفر من قطع الاتصال (Render Idle Timeout)
       pingIntervalRef.current = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'ping' }));

@@ -18,28 +18,84 @@ import {
 } from 'lucide-react';
 import './header.css';
 
-interface TimeLeft {
-  days: number;
-  hours: number;
-  minutes: number;
-  seconds: number;
+interface EventItem {
+  id: number;
+  title: string;
+  highlight: string;
+  durationSeconds: number; // مدة الحدث بالثواني (24 ساعة)
+  actionText: string;
+  badge: string;
 }
+
+// 24 ساعة بالثواني = 86400
+const DAY_IN_SECONDS = 86400;
+
+const EVENTS_DATA: EventItem[] = [
+  {
+    id: 1,
+    title: "Next Live Pitch Session",
+    highlight: "Random Match with Top VCs & Angel Investors",
+    durationSeconds: DAY_IN_SECONDS,
+    actionText: "Participate",
+    badge: "VC Pitch"
+  },
+  {
+    id: 2,
+    title: "Y Combinator Founder Match",
+    highlight: "Exclusive Speed Networking for AI Startups",
+    durationSeconds: DAY_IN_SECONDS,
+    actionText: "Join Queue",
+    badge: "Exclusive"
+  },
+  {
+    id: 3,
+    title: "Techstars Demo Day Preview",
+    highlight: "Connect with Global Tech Mentors & Advisors",
+    durationSeconds: DAY_IN_SECONDS,
+    actionText: "Reserve Seat",
+    badge: "Live Event"
+  },
+  {
+    id: 4,
+    title: "Global Creators & Streamers Hub",
+    highlight: "Direct Collaboration & Sponsorship Match",
+    durationSeconds: DAY_IN_SECONDS,
+    actionText: "Enter Room",
+    badge: "Networking"
+  },
+  {
+    id: 5,
+    title: "Seed Investment Speed Dating",
+    highlight: "Pitch your MVP to verified European Funds",
+    durationSeconds: DAY_IN_SECONDS,
+    actionText: "Apply Now",
+    badge: "Funding"
+  }
+];
 
 export const Header: React.FC = () => {
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLDivElement>(null);
 
-  // حالة المستخدم وصورة الحساب
+  // حالة المستخدم
   const [user, setUser] = useState<any>(null);
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
+  // حالة الأحداث والمؤقت
+  const [currentEventIndex, setCurrentEventIndex] = useState<number>(() => {
+    const savedIndex = localStorage.getItem('event_current_index');
+    return savedIndex ? parseInt(savedIndex, 10) : 0;
+  });
+
+  const [secondsLeft, setSecondsLeft] = useState<number>(0);
+
+  const currentEvent = EVENTS_DATA[currentEventIndex];
+
   useEffect(() => {
-    // التحقق من وجود المستخدم مسجل الدخول في localStorage
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
       try {
@@ -50,6 +106,56 @@ export const Header: React.FC = () => {
     }
   }, []);
 
+  // إدارة التوقيت المستمر والمزامنة مع localStorage لمنع العودة لـ 24 ساعة عند الـ Reload
+  useEffect(() => {
+    const getTargetTime = (index: number) => {
+      const savedTarget = localStorage.getItem(`event_target_time_${index}`);
+      if (savedTarget) {
+        return parseInt(savedTarget, 10);
+      }
+      const newTarget = Date.now() + EVENTS_DATA[index].durationSeconds * 1000;
+      localStorage.setItem(`event_target_time_${index}`, newTarget.toString());
+      return newTarget;
+    };
+
+    let targetTime = getTargetTime(currentEventIndex);
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const remaining = Math.max(0, Math.floor((targetTime - now) / 1000));
+
+      if (remaining <= 0) {
+        // تنظيف التوقيت القديم للحدث الحالي
+        localStorage.removeItem(`event_target_time_${currentEventIndex}`);
+        
+        // الانتقال للحدث التالي
+        const nextIndex = (currentEventIndex + 1) % EVENTS_DATA.length;
+        setCurrentEventIndex(nextIndex);
+        localStorage.setItem('event_current_index', nextIndex.toString());
+      } else {
+        setSecondsLeft(remaining);
+      }
+    };
+
+    updateTimer();
+    const timer = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(timer);
+  }, [currentEventIndex]);
+
+  // تحويل الثواني المتبقية إلى صيغة HH:MM:SS
+  const formatTime = (totalSeconds: number) => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const pad = (num: number) => String(num).padStart(2, '0');
+
+    return { hours: pad(hours), minutes: pad(minutes), seconds: pad(seconds) };
+  };
+
+  const timeObj = formatTime(secondsLeft);
+
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -57,26 +163,6 @@ export const Header: React.FC = () => {
     setIsUserDropdownOpen(false);
     window.location.href = '/';
   };
-
-  const [timeLeft, setTimeLeft] = useState<TimeLeft>({
-    days: 6,
-    hours: 8,
-    minutes: 16,
-    seconds: 0
-  });
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev.seconds > 0) return { ...prev, seconds: prev.seconds - 1 };
-        if (prev.minutes > 0) return { ...prev, minutes: 59, seconds: 59 };
-        if (prev.hours > 0) return { ...prev, hours: prev.hours - 1, minutes: 59, seconds: 59 };
-        if (prev.days > 0) return { ...prev, days: prev.days - 1, hours: 23, minutes: 59, seconds: 59 };
-        return prev;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const handleCloseSearch = () => {
     setIsClosing(true);
@@ -101,8 +187,6 @@ export const Header: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isSearchOpen, isClosing]);
 
-  const padZero = (num: number) => String(num).padStart(2, '0');
-
   const toggleDropdown = (menuName: string) => {
     setActiveDropdown(prev => (prev === menuName ? null : menuName));
   };
@@ -117,20 +201,22 @@ export const Header: React.FC = () => {
 
   return (
     <header className="aleo-header" dir="ltr">
-      {/* 1. Top Announcement Banner */}
+      {/* 1. Automatic Top Event Banner (Persistent Countdown) */}
       <div className="top-banner">
+        <div className="event-badge-tag">{currentEvent.badge}</div>
+
         <div className="countdown-timer" dir="ltr">
-          <span className="timer-box">{padZero(timeLeft.days)}d</span>
+          <span className="timer-box">{timeObj.hours}h</span>
           <span className="timer-colon">:</span>
-          <span className="timer-box">{padZero(timeLeft.hours)}h</span>
+          <span className="timer-box">{timeObj.minutes}m</span>
           <span className="timer-colon">:</span>
-          <span className="timer-box">{padZero(timeLeft.minutes)}m</span>
+          <span className="timer-box highlight-seconds">{timeObj.seconds}s</span>
         </div>
         
-        <span className="banner-text">until next Live Pitch Session</span>
-        <span className="banner-highlight">Random Match with Top VCs & Angel Investors</span>
+        <span className="banner-text">{currentEvent.title}</span>
+        <span className="banner-highlight">— {currentEvent.highlight}</span>
 
-        <button className="btn-participate">Participate</button>
+        <button className="btn-participate">{currentEvent.actionText}</button>
       </div>
 
       {/* 2. Main Navigation Bar */}
@@ -158,7 +244,6 @@ export const Header: React.FC = () => {
                 </button>
                 <div className="dropdown-menu w-64">
                   <a href="#" className="dropdown-link">
-                    {/* تم تعديل لون الأيقونة وتنسيقها */}
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(234, 179, 8, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Zap style={{ color: '#eab308' }} size={18} />
                     </div>
@@ -331,7 +416,6 @@ export const Header: React.FC = () => {
             
             <button className="btn-start-create">Start Live Match</button>
             
-            {/* عرض صورة البروفايل أو زر تسجيل الدخول */}
             {user ? (
               <div className="user-profile-menu-container" ref={userMenuRef} style={{ position: 'relative' }}>
                 <button 
@@ -424,7 +508,7 @@ export const Header: React.FC = () => {
               </div>
             ) : (
               <button className="btn-icon-search" onClick={toggleSearch}>
-                <Search size= {20} />
+                <Search size={20} />
               </button>
             )}
           </div>
