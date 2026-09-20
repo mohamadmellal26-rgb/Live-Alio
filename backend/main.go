@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -47,12 +48,6 @@ type Client struct {
 	Peer     *Client         `json:"-"`    // الطرف الآخر المقترن به
 	RoomID   string          `json:"roomId,omitempty"`
 	mu       sync.Mutex
-}
-
-type SignalMessage struct {
-	Type    string          `json:"type"` // "match_found", "offer", "answer", "ice_candidate", "chat"
-	Target  string          `json:"target,omitempty"`
-	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // =================== In-Memory Database & Hub ===================
@@ -224,7 +219,6 @@ func main() {
 	// ---------------- Auth Routes ----------------
 	api := app.Group("/api/v1")
 
-	// Register / Sign Up
 	api.Post("/signup", func(c *fiber.Ctx) error {
 		var req RegisterRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -263,7 +257,6 @@ func main() {
 		})
 	})
 
-	// Login
 	api.Post("/login", func(c *fiber.Ctx) error {
 		var req LoginRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -289,29 +282,29 @@ func main() {
 		})
 	})
 
-	// ---------------- WebSocket Authentication Middleware ----------------
+	// ---------------- WebSocket Upgrade Check & Optional Auth ----------------
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			tokenStr := c.Query("token")
-			if tokenStr == "" {
-				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Missing auth token"})
+			if tokenStr != "" {
+				claims, err := parseToken(tokenStr)
+				if err == nil {
+					c.Locals("userId", claims["userId"])
+					c.Locals("fullName", claims["fullName"])
+					return c.Next()
+				}
 			}
 
-			claims, err := parseToken(tokenStr)
-			if err != nil {
-				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid or expired token"})
-			}
-
-			c.Locals("userId", claims["userId"])
-			c.Locals("fullName", claims["fullName"])
-
+			// إذا لم يوجد التوكن أو كان غير صالح، يتم معالجته كزائر Guest
+			guestID := uuid.New().String()
+			c.Locals("userId", guestID)
+			c.Locals("fullName", "Guest_"+guestID[:5])
 			return c.Next()
 		}
 		return fiber.ErrUpgradeRequired
 	})
 
 	// ---------------- WebSocket Connection Point ----------------
-	// Example Call: ws://localhost:8080/ws/live?role=youtuber&token=YOUR_JWT_TOKEN
 	app.Get("/ws/live", websocket.New(func(c *websocket.Conn) {
 		role := c.Query("role", "all")
 		if role != "youtuber" && role != "all" {
@@ -361,8 +354,13 @@ func main() {
 		})
 	})
 
-	log.Println("Live-Aleo backend running on :8080")
-	if err := app.Listen(":8080"); err != nil {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Live-Aleo backend running on port :%s", port)
+	if err := app.Listen(":" + port); err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}
 }

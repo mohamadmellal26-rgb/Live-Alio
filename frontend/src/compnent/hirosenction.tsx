@@ -16,6 +16,7 @@ export const HeroSection: React.FC = () => {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
 
@@ -84,6 +85,10 @@ export const HeroSection: React.FC = () => {
   }, [isConnected]);
 
   const stopPeerConnection = () => {
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -117,15 +122,22 @@ export const HeroSection: React.FC = () => {
 
     setIsMatching(true);
 
+    const token = localStorage.getItem('token') || '';
     const backendRole = selectedRole === 'creators' ? 'youtuber' : 'all';
-    // تم تحديث الرابط هنا ليطابق سيرفر Render الجديد
-    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${backendRole}`;
+    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${backendRole}&token=${token}`;
     
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
       console.log("Connected to signaling server");
+      
+      // إرسال Ping كل 25 ثانية لمنع السيرفر من قطع الاتصال (Render Idle Timeout)
+      pingIntervalRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 25000);
     };
 
     ws.onmessage = async (event) => {
@@ -188,6 +200,10 @@ export const HeroSection: React.FC = () => {
     };
 
     ws.onclose = () => {
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+        pingIntervalRef.current = null;
+      }
       setIsConnected(false);
       setIsMatching(false);
     };
