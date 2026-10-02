@@ -16,7 +16,7 @@ import { useUserProfile } from './hooks/useUserProfile';
 import './Profile.css';
 
 // Vite Environment Variable
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
 
 export const ProfilePage: React.FC = () => {
   const { data, isLoading, error } = useUserProfile();
