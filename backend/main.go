@@ -1,22 +1,19 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"log"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
-	"time"
+    "encoding/json"
+    "log"
+    "os"
+    "sync"
+    "time"
 
-	"github.com/gofiber/contrib/websocket"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
+    "github.com/gofiber/contrib/websocket"
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/cors"
+    "github.com/gofiber/fiber/v2/middleware/logger"
+    "github.com/golang-jwt/jwt/v5"
+    "github.com/google/uuid"
+    "golang.org/x/crypto/bcrypt"
 )
 
 var jwtSecret = []byte("super_secret_live_aleo_key_2026")
