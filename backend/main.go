@@ -1,19 +1,19 @@
 package main
 
 import (
-    "encoding/json"
-    "log"
-    "os"
-    "sync"
-    "time"
+	"encoding/json"
+	"log"
+	"os"
+	"sync"
+	"time"
 
-    "github.com/gofiber/contrib/websocket"
-    "github.com/gofiber/fiber/v2"
-    "github.com/gofiber/fiber/v2/middleware/cors"
-    "github.com/gofiber/fiber/v2/middleware/logger"
-    "github.com/golang-jwt/jwt/v5"
-    "github.com/google/uuid"
-    "golang.org/x/crypto/bcrypt"
+	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var jwtSecret = []byte("super_secret_live_aleo_key_2026")
@@ -44,9 +44,9 @@ type LoginRequest struct {
 }
 
 type SignalMessage struct {
-	Type   string      `json:"type"`
-	Offer  interface{} `json:"offer,omitempty"`
-	Answer interface{} `json:"answer,omitempty"`
+	Type      string      `json:"type"`
+	Offer     interface{} `json:"offer,omitempty"`
+	Answer    interface{} `json:"answer,omitempty"`
 	Candidate interface{} `json:"candidate,omitempty"`
 }
 
@@ -125,7 +125,7 @@ func (h *Hub) FindMatchForClient(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// فصل الاتصال القديم إن وجد
+	// فصل الاتصال القديم إن وجد وإعلام الشريك
 	if client.Peer != nil {
 		peer := client.Peer
 		peer.Peer = nil
@@ -442,8 +442,29 @@ func main() {
 
 			var sig SignalMessage
 			if err := json.Unmarshal(message, &sig); err == nil {
+				// عند طلب البحث عن مطابقة جديدة
 				if sig.Type == "find_match" {
 					hub.FindMatchForClient(client)
+					continue
+				}
+
+				// عند النقر على إغلاق الجلسة أو المغادرة
+				if sig.Type == "leave" {
+					hub.mu.Lock()
+					if client.Peer != nil {
+						peer := client.Peer
+						peer.Peer = nil
+						peer.RoomID = ""
+
+						disconnectMsg, _ := json.Marshal(map[string]string{
+							"type":    "peer_disconnected",
+							"message": "Partner left the stream",
+						})
+						peer.SafeWrite(disconnectMsg)
+					}
+					client.Peer = nil
+					client.RoomID = ""
+					hub.mu.Unlock()
 					continue
 				}
 			}

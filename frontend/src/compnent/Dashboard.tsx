@@ -44,11 +44,33 @@ export const Dashboard: React.FC = () => {
 
   const isRegularUser = !user?.role || user?.role === 'user' || user?.role === 'regular';
 
-  useEffect(() => {
-    if (isRegularUser && filters.targetType !== 'all') {
-      setFilters((prev) => ({ ...prev, targetType: 'all' }));
+  // 1. تشغيل الكاميرا المحلية
+  const startLocalCamera = useCallback(async () => {
+    if (localStreamRef.current) return; // تم تشغيلها سابقاً
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+        audio: true 
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error('Error accessing camera/mic:', err);
     }
-  }, [user, isRegularUser, filters.targetType]);
+  }, []);
+
+  // 2. إيقاف الكاميرا المحلية عند الخروج النهائي من التطبيق
+  const stopLocalCamera = useCallback(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+  }, []);
 
   const sendSignal = useCallback((payload: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -56,10 +78,13 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
-  const cleanupConnection = useCallback(() => {
+  // 3. تنظيف اتصال الـ WebRTC الحالي فقط
+  const cleanupPeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.ontrack = null;
       peerConnectionRef.current.onicecandidate = null;
+      peerConnectionRef.current.oniceconnectionstatechange = null;
+      peerConnectionRef.current.onconnectionstatechange = null;
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
@@ -71,6 +96,18 @@ export const Dashboard: React.FC = () => {
     iceCandidatesQueue.current = [];
   }, []);
 
+  // 4. العودة لوضع الكاميرا العادي (إلغاء المحادثة)
+  const resetToCameraOnly = useCallback(() => {
+    cleanupPeerConnection();
+    setIsSearching(false);
+    setIsConnectedToPeer(false);
+    setPeerName('');
+  }, [cleanupPeerConnection]);
+
+  const handlePeerDisconnected = useCallback(() => {
+    resetToCameraOnly();
+  }, [resetToCameraOnly]);
+
   const processQueuedCandidates = async () => {
     if (!peerConnectionRef.current) return;
     while (iceCandidatesQueue.current.length > 0) {
@@ -79,16 +116,14 @@ export const Dashboard: React.FC = () => {
         try {
           await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (e) {
-          console.error('Error adding queued ICE Candidate:', e);
+          console.error('Error adding queued candidate:', e);
         }
       }
     }
   };
 
   const createPeerConnection = useCallback(() => {
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-    }
+    cleanupPeerConnection();
 
     const pc = new RTCPeerConnection(rtcConfiguration);
     peerConnectionRef.current = pc;
@@ -111,8 +146,18 @@ export const Dashboard: React.FC = () => {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      if (
+        pc.iceConnectionState === 'disconnected' ||
+        pc.iceConnectionState === 'failed' ||
+        pc.iceConnectionState === 'closed'
+      ) {
+        handlePeerDisconnected();
+      }
+    };
+
     return pc;
-  }, [sendSignal]);
+  }, [cleanupPeerConnection, sendSignal, handlePeerDisconnected]);
 
   const handleSignalingMessage = useCallback(async (data: any) => {
     switch (data.type) {
@@ -166,7 +211,7 @@ export const Dashboard: React.FC = () => {
             try {
               await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
             } catch (e) {
-              console.error('Error adding ICE Candidate directly:', e);
+              console.error('Error adding ICE candidate:', e);
             }
           } else {
             iceCandidatesQueue.current.push(data.candidate);
@@ -176,19 +221,17 @@ export const Dashboard: React.FC = () => {
       }
 
       case 'peer_disconnected':
-        cleanupConnection();
-        setIsConnectedToPeer(false);
-        setPeerName('');
+        handlePeerDisconnected();
         break;
 
       default:
         break;
     }
-  }, [createPeerConnection, sendSignal, cleanupConnection]);
+  }, [createPeerConnection, sendSignal, handlePeerDisconnected]);
 
   const connectPresenceWS = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+      return;
     }
 
     const token = localStorage.getItem('token') || '';
@@ -201,7 +244,7 @@ export const Dashboard: React.FC = () => {
         const data = JSON.parse(event.data);
         handleSignalingMessage(data);
       } catch (err) {
-        console.error('Error parsing WebSocket message:', err);
+        console.error('Error parsing WS message:', err);
       }
     };
 
@@ -210,43 +253,16 @@ export const Dashboard: React.FC = () => {
     };
   }, [filters.targetType, handleSignalingMessage]);
 
-  useEffect(() => {
-    startLocalCamera();
-    connectPresenceWS();
+  // إغلاق الجلسة عند الضغط على "Stop Session" أو "إغلاق"
+  const handleStopSession = useCallback(() => {
+    sendSignal({ type: 'leave' });
+    resetToCameraOnly();
+  }, [sendSignal, resetToCameraOnly]);
 
-    return () => {
-      stopLocalCamera();
-      cleanupConnection();
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, []);
-
-  const startLocalCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
-        audio: true 
-      });
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      console.error('Error accessing media devices:', err);
-    }
-  };
-
-  const stopLocalCamera = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
-      localStreamRef.current = null;
-    }
-  };
-
-  const handleStartMatching = () => {
-    cleanupConnection();
+  // البدء بالبحث عن مطابقة جديدة
+  const handleStartMatching = useCallback(() => {
+    sendSignal({ type: 'leave' });
+    cleanupPeerConnection();
     setIsSearching(true);
     setIsConnectedToPeer(false);
     setPeerName('');
@@ -256,14 +272,33 @@ export const Dashboard: React.FC = () => {
     } else {
       sendSignal({ type: 'find_match' });
     }
-  };
+  }, [sendSignal, cleanupPeerConnection, connectPresenceWS]);
 
-  const handleStopMatch = () => {
-    cleanupConnection();
-    setIsSearching(false);
-    setIsConnectedToPeer(false);
-    setPeerName('');
-  };
+  // إدارة الكاميرا والـ WebSocket عند إقلاع الصفحة والخروج
+  useEffect(() => {
+    startLocalCamera();
+    connectPresenceWS();
+
+    const handleBeforeUnload = () => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'leave' }));
+        wsRef.current.close();
+      }
+      cleanupPeerConnection();
+      stopLocalCamera();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      handleStopSession();
+      stopLocalCamera();
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [startLocalCamera, connectPresenceWS, cleanupPeerConnection, stopLocalCamera, handleStopSession]);
 
   const toggleMute = () => {
     if (localStreamRef.current) {
@@ -311,6 +346,7 @@ export const Dashboard: React.FC = () => {
               disabled={isRegularUser}
               onChange={(e) => {
                 setFilters({ ...filters, targetType: e.target.value as any });
+                if (wsRef.current) wsRef.current.close();
                 connectPresenceWS();
               }}
             >
@@ -351,8 +387,9 @@ export const Dashboard: React.FC = () => {
 
         <div className="dashboard-content">
           <div className="cam-studio-wrapper">
+            {/* الشاشة المحلية: الكاميرا تعمل دائماً */}
             <div className="cam-box local-cam">
-              <span className="cam-label">YOU ({user.fullName || 'Mohamad'})</span>
+              <span className="cam-label">YOU ({user.fullName || 'User'})</span>
               <video 
                 ref={localVideoRef} 
                 autoPlay 
@@ -362,13 +399,14 @@ export const Dashboard: React.FC = () => {
               />
             </div>
 
+            {/* الشاشة البعيدة: تتغير حسب الحالة */}
             <div className={`cam-box remote-cam ${isSearching ? 'searching' : ''}`}>
               <span className="cam-label">
                 {isSearching 
                   ? 'SEARCHING FOR A MATCH...' 
                   : isConnectedToPeer 
                   ? `MATCHED WITH: ${peerName}` 
-                  : 'MATCHED PARTNER'}
+                  : 'CAMERA DISPLAY'}
               </span>
               
               <video 
@@ -388,12 +426,12 @@ export const Dashboard: React.FC = () => {
                   <div className="search-loader">
                     <div className="spinner"></div>
                     <p>Finding a match ({filters.targetType})...</p>
-                    <button className="btn-cancel" onClick={handleStopMatch}>Cancel</button>
+                    <button className="btn-cancel" onClick={handleStopSession}>Cancel</button>
                   </div>
                 ) : (
                   <div className="cam-placeholder">
                     <div className="cam-avatar glow">📷</div>
-                    <p>Click "Start 1v1 Match" to start session</p>
+                    <p>Camera is Ready - Click "Start 1v1 Match" to Connect</p>
                   </div>
                 )
               )}
@@ -408,10 +446,10 @@ export const Dashboard: React.FC = () => {
             {(isConnectedToPeer || isSearching) && (
               <button 
                 className="btn-control" 
-                onClick={handleStopMatch}
-                style={{ backgroundColor: '#ef4444', color: '#fff', border: 'none' }}
+                onClick={handleStopSession}
+                style={{ backgroundColor: '#ef4444', color: '#fff', border: 'none', cursor: 'pointer' }}
               >
-                Stop Session
+                Close Session ✖
               </button>
             )}
 
