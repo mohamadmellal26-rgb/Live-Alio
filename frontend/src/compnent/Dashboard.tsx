@@ -20,29 +20,22 @@ export const Dashboard: React.FC = () => {
   const [isConnectedToPeer, setIsConnectedToPeer] = useState(false);
   const [peerName, setPeerName] = useState<string>('');
   const [isMuted, setIsMuted] = useState(false);
-
-  // حالة عدد المستخدمين المتواجدين حالياً (الحقيقي)
   const [onlineUsersCount, setOnlineUsersCount] = useState<number>(0);
 
-  // عناصر الفيديو
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // مراجع الاتصالات والبث
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // طابور لتخزين ICE Candidates قبل إعداد Remote Description
   const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
 
-  // بيانات المستخدم
   const [user] = useState<any>(() => {
     const savedUser = localStorage.getItem('user');
     return savedUser ? JSON.parse(savedUser) : { fullName: 'Mohamad', role: 'user' };
   });
 
-  // الفلاتر
   const [filters, setFilters] = useState<MatchFilter>({
     targetType: 'all',
     ageFilter: '18+',
@@ -56,61 +49,6 @@ export const Dashboard: React.FC = () => {
       setFilters((prev) => ({ ...prev, targetType: 'all' }));
     }
   }, [user, isRegularUser, filters.targetType]);
-
-  // تشغيل الكاميرا المحلية عند التحميل والاتصال المباشر بالـ WebSocket الرئيسي للبث العام
-  useEffect(() => {
-    startLocalCamera();
-    connectPresenceWS();
-
-    return () => {
-      stopLocalCamera();
-      cleanupConnection();
-    };
-  }, []);
-
-  const connectPresenceWS = () => {
-    if (wsRef.current) return;
-
-    const token = localStorage.getItem('token') || '';
-    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${filters.targetType}&token=${token}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleSignalingMessage(data);
-      } catch (err) {
-        console.error('Error parsing WebSocket message:', err);
-      }
-    };
-
-    ws.onclose = () => {
-      wsRef.current = null;
-    };
-  };
-
-  const startLocalCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
-        audio: true 
-      });
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      console.error('Error accessing media devices:', err);
-    }
-  };
-
-  const stopLocalCamera = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
-      localStreamRef.current = null;
-    }
-  };
 
   const sendSignal = useCallback((payload: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -184,7 +122,7 @@ export const Dashboard: React.FC = () => {
         }
         break;
 
-      case 'match_found':
+      case 'match_found': {
         setIsSearching(false);
         setIsConnectedToPeer(true);
         setPeerName(data.peerName || 'Partner');
@@ -201,9 +139,10 @@ export const Dashboard: React.FC = () => {
           }
         }
         break;
+      }
 
       case 'offer': {
-        let currentPc = peerConnectionRef.current || createPeerConnection();
+        const currentPc = peerConnectionRef.current || createPeerConnection();
         await currentPc.setRemoteDescription(new RTCSessionDescription(data.offer));
         await processQueuedCandidates();
 
@@ -246,6 +185,65 @@ export const Dashboard: React.FC = () => {
         break;
     }
   }, [createPeerConnection, sendSignal, cleanupConnection]);
+
+  const connectPresenceWS = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    const token = localStorage.getItem('token') || '';
+    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${filters.targetType}&token=${token}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleSignalingMessage(data);
+      } catch (err) {
+        console.error('Error parsing WebSocket message:', err);
+      }
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+  }, [filters.targetType, handleSignalingMessage]);
+
+  useEffect(() => {
+    startLocalCamera();
+    connectPresenceWS();
+
+    return () => {
+      stopLocalCamera();
+      cleanupConnection();
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
+
+  const startLocalCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+        audio: true 
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error('Error accessing media devices:', err);
+    }
+  };
+
+  const stopLocalCamera = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+  };
 
   const handleStartMatching = () => {
     cleanupConnection();
@@ -311,7 +309,10 @@ export const Dashboard: React.FC = () => {
               className="filter-select"
               value={filters.targetType}
               disabled={isRegularUser}
-              onChange={(e) => setFilters({ ...filters, targetType: e.target.value as any })}
+              onChange={(e) => {
+                setFilters({ ...filters, targetType: e.target.value as any });
+                connectPresenceWS();
+              }}
             >
               <option value="all">All Users</option>
               {!isRegularUser && (

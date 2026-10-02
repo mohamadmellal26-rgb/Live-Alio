@@ -19,17 +19,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// JWT Secret Key
 var jwtSecret = []byte("super_secret_live_aleo_key_2026")
-
-// =================== Models ===================
 
 type User struct {
 	ID           string `json:"id"`
 	FullName     string `json:"fullName"`
 	Email        string `json:"email"`
 	Password     string `json:"-"`
-	Role         string `json:"role"` // "user", "youtuber", "investor"
+	Role         string `json:"role"`
 	YoutubeUrl   string `json:"youtubeUrl,omitempty"`
 	PyCardId     string `json:"pyCardId,omitempty"`
 	ProjectProof string `json:"projectProof,omitempty"`
@@ -49,16 +46,23 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+type SignalMessage struct {
+	Type   string      `json:"type"`
+	Offer  interface{} `json:"offer,omitempty"`
+	Answer interface{} `json:"answer,omitempty"`
+	Candidate interface{} `json:"candidate,omitempty"`
+}
+
 type Client struct {
 	ID           string          `json:"id"`
 	UserID       string          `json:"userId"`
 	FullName     string          `json:"fullName"`
 	Conn         *websocket.Conn `json:"-"`
-	UserRole     string          `json:"userRole"`     // "user", "youtuber", "investor"
-	TargetFilter string          `json:"targetFilter"` // "all", "youtuber", "investor"
+	UserRole     string          `json:"userRole"`
+	TargetFilter string          `json:"targetFilter"`
 	Peer         *Client         `json:"-"`
 	RoomID       string          `json:"roomId,omitempty"`
-	sendChan     chan []byte     `json:"-"` // حماية من Concurrent Writes
+	sendChan     chan []byte     `json:"-"`
 	mu           sync.Mutex
 }
 
@@ -74,10 +78,8 @@ func (c *Client) SafeWrite(msg []byte) {
 	}
 }
 
-// =================== In-Memory Database & Hub ===================
-
 type UserStore struct {
-	users map[string]*User // email -> User
+	users map[string]*User
 	mu    sync.RWMutex
 }
 
@@ -100,7 +102,6 @@ func newHub() *Hub {
 	}
 }
 
-// بث عدد المتواجدين لجميع الأجهزة المتصلة
 func (h *Hub) BroadcastOnlineCount() {
 	count := len(h.clients)
 	msg, _ := json.Marshal(map[string]interface{}{
@@ -116,15 +117,42 @@ func (h *Hub) BroadcastOnlineCount() {
 func (h *Hub) RegisterClient(client *Client) {
 	h.mu.Lock()
 	h.clients[client.ID] = client
-	log.Printf("Client registered: %s (User: %s, RealRole: %s, TargetFilter: %s)",
-		client.ID, client.FullName, client.UserRole, client.TargetFilter)
+	log.Printf("Client registered: %s (%s)", client.ID, client.FullName)
 
 	h.matchClientUnlocked(client)
-	h.BroadcastOnlineCount() // إرسال التحديث للجميع عند دخول مستخدم جديد
+	h.BroadcastOnlineCount()
 	h.mu.Unlock()
 }
 
+func (h *Hub) FindMatchForClient(client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// فصل الاتصال القديم إن وجد
+	if client.Peer != nil {
+		peer := client.Peer
+		peer.Peer = nil
+		peer.RoomID = ""
+		client.Peer = nil
+		client.RoomID = ""
+
+		disconnectMsg, _ := json.Marshal(map[string]string{
+			"type":    "peer_disconnected",
+			"message": "Partner requested next match",
+		})
+		peer.SafeWrite(disconnectMsg)
+		h.matchClientUnlocked(peer)
+	}
+
+	h.matchClientUnlocked(client)
+}
+
 func (h *Hub) matchClientUnlocked(client *Client) {
+	// تأكد من عدم تكراره في الطوابير
+	h.youtuberQueue = removeClientFromSlice(h.youtuberQueue, client)
+	h.investorQueue = removeClientFromSlice(h.investorQueue, client)
+	h.allQueue = removeClientFromSlice(h.allQueue, client)
+
 	if client.TargetFilter == "youtuber" && len(h.youtuberQueue) > 0 {
 		peer := h.youtuberQueue[0]
 		h.youtuberQueue = h.youtuberQueue[1:]
@@ -208,10 +236,8 @@ func (h *Hub) UnregisterClient(client *Client) {
 		h.matchClientUnlocked(peer)
 	}
 
-	h.BroadcastOnlineCount() // إرسال التحديث للجميع عند خروج مستخدم
+	h.BroadcastOnlineCount()
 	h.mu.Unlock()
-
-	log.Printf("Client disconnected: %s", client.ID)
 }
 
 func removeClientFromSlice(slice []*Client, target *Client) []*Client {
@@ -223,8 +249,6 @@ func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 	}
 	return result
 }
-
-// =================== JWT Helpers ===================
 
 func generateToken(user *User) (string, error) {
 	claims := jwt.MapClaims{
@@ -252,8 +276,6 @@ func parseToken(tokenStr string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
-// =================== Main Server ===================
-
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
@@ -272,7 +294,6 @@ func main() {
 
 	hub := newHub()
 
-	// ---------------- Auth Routes ----------------
 	api := app.Group("/api/v1")
 
 	api.Post("/signup", func(c *fiber.Ctx) error {
@@ -288,38 +309,11 @@ func main() {
 		}
 
 		if req.Email == "" || req.Password == "" || req.FullName == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "Missing required fields (fullName, email, password)"})
+			return c.Status(400).JSON(fiber.Map{"error": "Missing required fields"})
 		}
 
 		if req.Role == "" {
 			req.Role = "user"
-		}
-
-		if req.Role == "youtuber" && req.YoutubeUrl == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "YouTube channel or video URL is required for YouTuber role"})
-		}
-
-		var projectProofPath string
-
-		if req.Role == "investor" {
-			if req.PyCardId == "" {
-				return c.Status(400).JSON(fiber.Map{"error": "Payoneer / Py Merchant Card ID is required for Investor role"})
-			}
-
-			file, err := c.FormFile("projectProof")
-			if err != nil {
-                return c.Status(400).JSON(fiber.Map{"error": "Project proof file (PDF/Doc) is required for Investors"})
-			}
-
-			ext := strings.ToLower(filepath.Ext(file.Filename))
-			if ext != ".pdf" && ext != ".doc" && ext != ".docx" {
-				return c.Status(400).JSON(fiber.Map{"error": "Only PDF, DOC, and DOCX files are allowed"})
-			}
-
-			projectProofPath = fmt.Sprintf("./uploads/%s_%s", uuid.New().String(), file.Filename)
-			if err := c.SaveFile(file, projectProofPath); err != nil {
-				return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
-			}
 		}
 
 		userStore.mu.Lock()
@@ -335,14 +329,11 @@ func main() {
 		}
 
 		newUser := &User{
-			ID:           uuid.New().String(),
-			FullName:     req.FullName,
-			Email:        req.Email,
-			Password:     string(hashedPassword),
-			Role:         req.Role,
-			YoutubeUrl:   req.YoutubeUrl,
-			PyCardId:     req.PyCardId,
-			ProjectProof: projectProofPath,
+			ID:       uuid.New().String(),
+			FullName: req.FullName,
+			Email:    req.Email,
+			Password: string(hashedPassword),
+			Role:     req.Role,
 		}
 
 		userStore.users[req.Email] = newUser
@@ -384,7 +375,6 @@ func main() {
 		})
 	})
 
-	// ---------------- WebSocket Auth Check ----------------
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			tokenStr := c.Query("token")
@@ -407,7 +397,6 @@ func main() {
 		return fiber.ErrUpgradeRequired
 	})
 
-	// ---------------- WebSocket Live Route ----------------
 	app.Get("/ws/live", websocket.New(func(c *websocket.Conn) {
 		realRole, _ := c.Locals("role").(string)
 		if realRole == "" {
@@ -415,11 +404,6 @@ func main() {
 		}
 
 		targetFilter := c.Query("role")
-
-		if realRole == "user" && (targetFilter == "youtuber" || targetFilter == "investor") {
-			targetFilter = "all"
-		}
-
 		if targetFilter != "youtuber" && targetFilter != "investor" {
 			targetFilter = "all"
 		}
@@ -459,6 +443,14 @@ func main() {
 				break
 			}
 
+			var sig SignalMessage
+			if err := json.Unmarshal(message, &sig); err == nil {
+				if sig.Type == "find_match" {
+					hub.FindMatchForClient(client)
+					continue
+				}
+			}
+
 			client.mu.Lock()
 			peer := client.Peer
 			client.mu.Unlock()
@@ -468,13 +460,6 @@ func main() {
 			}
 		}
 	}))
-
-	app.Get("/api/v1/health", func(c *fiber.Ctx) error {
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{
-			"status":  "success",
-			"message": "Live-Aleo backend is running securely",
-		})
-	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
