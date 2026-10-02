@@ -15,6 +15,9 @@ import {
 import { useUserProfile } from './hooks/useUserProfile';
 import './Profile.css';
 
+// Vite Environment Variable
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+
 export const ProfilePage: React.FC = () => {
   const { data, isLoading, error } = useUserProfile();
   const [activeTab, setActiveTab] = useState<'content' | 'reviews' | 'about'>('content');
@@ -39,6 +42,18 @@ export const ProfilePage: React.FC = () => {
 
   const { profile: user, contents = [], primaryColor = '#e056fd' } = data;
 
+  const getFullImageUrl = (path?: string) => {
+    if (!path) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+    return `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+  };
+
+  // حماية من خطأ TypeScript عبر Casting المرن للـ Type
+  const avatarPath = user.avatarUrl || (user as unknown as { avatar?: string }).avatar;
+  const avatarSrc = getFullImageUrl(avatarPath);
+
   return (
     <div className="profile-page-container" dir="ltr">
       {/* Header Area */}
@@ -49,8 +64,16 @@ export const ProfilePage: React.FC = () => {
           <div className="profile-header-content">
             <div className="profile-avatar-group">
               <div className="profile-avatar-wrapper">
-                {user.avatarUrl ? (
-                  <img src={user.avatarUrl} alt={user.fullName} className="profile-avatar-img" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+                {avatarSrc ? (
+                  <img 
+                    src={avatarSrc} 
+                    alt={user.fullName} 
+                    className="profile-avatar-img" 
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
                 ) : (
                   <div className="profile-avatar-img" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1e1e24', color: '#fff', width: '100%', height: '100%', borderRadius: '50%' }}>
                     <UserIcon size={40} />
@@ -214,14 +237,14 @@ export const ProfilePage: React.FC = () => {
                       <div key={item.id} className="pitch-card">
                         {item.thumbnail && (
                           <div className="pitch-thumbnail">
-                            <img src={item.thumbnail} alt={item.title} />
+                            <img src={getFullImageUrl(item.thumbnail) || ''} alt={item.title} />
                             {item.duration && <span className="pitch-duration">{item.duration}</span>}
                           </div>
                         )}
                         <div className="pitch-content">
                           <h4 className="pitch-title">{item.title}</h4>
                           <p className="pitch-desc">
-                            {item.category ? `${item.category} • ` : ''}
+                            {item.category ? `${item.category} ` : ''}
                             {item.views !== undefined ? `${item.views.toLocaleString()} Views` : ''}
                           </p>
                         </div>
