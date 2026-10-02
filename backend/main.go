@@ -100,6 +100,19 @@ func newHub() *Hub {
 	}
 }
 
+// بث عدد المتواجدين لجميع الأجهزة المتصلة
+func (h *Hub) BroadcastOnlineCount() {
+	count := len(h.clients)
+	msg, _ := json.Marshal(map[string]interface{}{
+		"type":  "online_count",
+		"count": count,
+	})
+
+	for _, client := range h.clients {
+		client.SafeWrite(msg)
+	}
+}
+
 func (h *Hub) RegisterClient(client *Client) {
 	h.mu.Lock()
 	h.clients[client.ID] = client
@@ -107,12 +120,11 @@ func (h *Hub) RegisterClient(client *Client) {
 		client.ID, client.FullName, client.UserRole, client.TargetFilter)
 
 	h.matchClientUnlocked(client)
+	h.BroadcastOnlineCount() // إرسال التحديث للجميع عند دخول مستخدم جديد
 	h.mu.Unlock()
 }
 
-// دالة المطابقة (يجب استدعاؤها والـ Lock مرفوع لمنع الـ Deadlock)
 func (h *Hub) matchClientUnlocked(client *Client) {
-	// 1. إذا كان يطلب Youtuber
 	if client.TargetFilter == "youtuber" && len(h.youtuberQueue) > 0 {
 		peer := h.youtuberQueue[0]
 		h.youtuberQueue = h.youtuberQueue[1:]
@@ -120,7 +132,6 @@ func (h *Hub) matchClientUnlocked(client *Client) {
 		return
 	}
 
-	// 2. إذا كان يطلب Investor
 	if client.TargetFilter == "investor" && len(h.investorQueue) > 0 {
 		peer := h.investorQueue[0]
 		h.investorQueue = h.investorQueue[1:]
@@ -128,7 +139,6 @@ func (h *Hub) matchClientUnlocked(client *Client) {
 		return
 	}
 
-	// 3. المطابقة من الطابور العام (All Queue)
 	if client.TargetFilter == "all" && len(h.allQueue) > 0 {
 		peer := h.allQueue[0]
 		h.allQueue = h.allQueue[1:]
@@ -136,7 +146,6 @@ func (h *Hub) matchClientUnlocked(client *Client) {
 		return
 	}
 
-	// 4. إذا لم يجد مطابقة، يضاف للطابور المناسب بحسب دوره الفعلي
 	if client.UserRole == "youtuber" {
 		h.youtuberQueue = append(h.youtuberQueue, client)
 	} else if client.UserRole == "investor" {
@@ -178,7 +187,6 @@ func (h *Hub) pairClientsUnlocked(c1, c2 *Client) {
 
 func (h *Hub) UnregisterClient(client *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	delete(h.clients, client.ID)
 
@@ -197,9 +205,11 @@ func (h *Hub) UnregisterClient(client *Client) {
 		})
 		peer.SafeWrite(disconnectMsg)
 
-		// إعادة الـ Peer المتبقي للبحث عن مطابقة جديدة تلقائياً
 		h.matchClientUnlocked(peer)
 	}
+
+	h.BroadcastOnlineCount() // إرسال التحديث للجميع عند خروج مستخدم
+	h.mu.Unlock()
 
 	log.Printf("Client disconnected: %s", client.ID)
 }
@@ -268,7 +278,6 @@ func main() {
 	api.Post("/signup", func(c *fiber.Ctx) error {
 		var req RegisterRequest
 
-		// دعم Multipart Form & JSON معاً
 		if err := c.BodyParser(&req); err != nil {
 			req.FullName = c.FormValue("fullName")
 			req.Email = c.FormValue("email")
@@ -299,7 +308,7 @@ func main() {
 
 			file, err := c.FormFile("projectProof")
 			if err != nil {
-				return c.Status(400).JSON(fiber.Map{"error": "Project proof file (PDF/Doc) is required for Investors"})
+                return c.Status(400).JSON(fiber.Map{"error": "Project proof file (PDF/Doc) is required for Investors"})
 			}
 
 			ext := strings.ToLower(filepath.Ext(file.Filename))
@@ -407,7 +416,6 @@ func main() {
 
 		targetFilter := c.Query("role")
 
-		// حماية أمنية: منع المستخدم العادي من اختيار فلاتر التخصص
 		if realRole == "user" && (targetFilter == "youtuber" || targetFilter == "investor") {
 			targetFilter = "all"
 		}
@@ -431,7 +439,6 @@ func main() {
 
 		hub.RegisterClient(client)
 
-		// Goroutine منفصلة لإدارة الكتابة بأمان (Safe Writer Loop)
 		go func() {
 			for msg := range client.sendChan {
 				if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -446,7 +453,6 @@ func main() {
 			c.Close()
 		}()
 
-		// القراءة المستمرة من الـ Client
 		for {
 			_, message, err := c.ReadMessage()
 			if err != nil {

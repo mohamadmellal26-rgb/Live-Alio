@@ -32,7 +32,6 @@ export const Dashboard: React.FC = () => {
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const statsWsRef = useRef<WebSocket | null>(null);
 
   // طابور لتخزين ICE Candidates قبل إعداد Remote Description
   const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
@@ -58,41 +57,38 @@ export const Dashboard: React.FC = () => {
     }
   }, [user, isRegularUser, filters.targetType]);
 
-  // 1. الاتصال بسيرفر التحديثات لجلب عدد المتواجدين الحقيقي باستمرار
-  useEffect(() => {
-    const token = localStorage.getItem('token') || '';
-    // يمكنك تعديل المسار إذا كان الباك إند لديك يوفر endpoint مخصص للإحصائيات أو نفس المسار
-    const statsWsUrl = `wss://live-alio.onrender.com/ws/live?stats=true&token=${token}`;
-    const statsWs = new WebSocket(statsWsUrl);
-    statsWsRef.current = statsWs;
-
-    statsWs.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'online_count' && typeof data.count === 'number') {
-          setOnlineUsersCount(data.count);
-        }
-      } catch (err) {
-        console.error('Error parsing stats WS message:', err);
-      }
-    };
-
-    return () => {
-      if (statsWsRef.current) {
-        statsWsRef.current.close();
-      }
-    };
-  }, []);
-
-  // تشغيل الكاميرا المحلية عند التحميل
+  // تشغيل الكاميرا المحلية عند التحميل والاتصال المباشر بالـ WebSocket الرئيسي للبث العام
   useEffect(() => {
     startLocalCamera();
+    connectPresenceWS();
 
     return () => {
       stopLocalCamera();
       cleanupConnection();
     };
   }, []);
+
+  const connectPresenceWS = () => {
+    if (wsRef.current) return;
+
+    const token = localStorage.getItem('token') || '';
+    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${filters.targetType}&token=${token}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleSignalingMessage(data);
+      } catch (err) {
+        console.error('Error parsing WebSocket message:', err);
+      }
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+  };
 
   const startLocalCamera = async () => {
     try {
@@ -106,7 +102,6 @@ export const Dashboard: React.FC = () => {
       }
     } catch (err) {
       console.error('Error accessing media devices:', err);
-      alert('الرجاء السماح بالوصول للكاميرا والمايكروفون للبدء في البث.');
     }
   };
 
@@ -117,31 +112,18 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  // إرسال الإشارات عبر WebSocket
   const sendSignal = useCallback((payload: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(payload));
     }
   }, []);
 
-  // إغلاق الاتصالات وتنظيف الذاكرة
   const cleanupConnection = useCallback(() => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.ontrack = null;
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
-    }
-
-    if (wsRef.current) {
-      wsRef.current.onopen = null;
-      wsRef.current.onmessage = null;
-      wsRef.current.onerror = null;
-      wsRef.current.onclose = null;
-      if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
-        wsRef.current.close();
-      }
-      wsRef.current = null;
     }
 
     if (remoteVideoRef.current) {
@@ -151,7 +133,6 @@ export const Dashboard: React.FC = () => {
     iceCandidatesQueue.current = [];
   }, []);
 
-  // تفريغ ICE Candidates من الطابور بعد إعداد السيرفر البعيد
   const processQueuedCandidates = async () => {
     if (!peerConnectionRef.current) return;
     while (iceCandidatesQueue.current.length > 0) {
@@ -166,7 +147,6 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  // إنشاء PeerConnection
   const createPeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
@@ -196,10 +176,8 @@ export const Dashboard: React.FC = () => {
     return pc;
   }, [sendSignal]);
 
-  // معالجة إشارات الـ WebRTC والـ WebSocket
   const handleSignalingMessage = useCallback(async (data: any) => {
     switch (data.type) {
-      // تحديث عدد المتواجدين عند استقبال الإشارة أثناء جلسة البحث
       case 'online_count':
         if (typeof data.count === 'number') {
           setOnlineUsersCount(data.count);
@@ -207,7 +185,6 @@ export const Dashboard: React.FC = () => {
         break;
 
       case 'match_found':
-        console.log('Match found! Initiator:', data.initiator);
         setIsSearching(false);
         setIsConnectedToPeer(true);
         setPeerName(data.peerName || 'Partner');
@@ -263,7 +240,6 @@ export const Dashboard: React.FC = () => {
         cleanupConnection();
         setIsConnectedToPeer(false);
         setPeerName('');
-        alert(data.message || 'Partner disconnected');
         break;
 
       default:
@@ -271,42 +247,17 @@ export const Dashboard: React.FC = () => {
     }
   }, [createPeerConnection, sendSignal, cleanupConnection]);
 
-  // بدء البحث والمطابقة
   const handleStartMatching = () => {
     cleanupConnection();
-
     setIsSearching(true);
     setIsConnectedToPeer(false);
     setPeerName('');
 
-    const token = localStorage.getItem('token') || '';
-    const activeRole = filters.targetType;
-
-    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${activeRole}&token=${token}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('Connected to Signaling WebSocket Server');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleSignalingMessage(data);
-      } catch (err) {
-        console.error('Error parsing WebSocket message:', err);
-      }
-    };
-
-    ws.onerror = (err) => {
-      console.error('WebSocket Error:', err);
-      setIsSearching(false);
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket Connection Closed');
-    };
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectPresenceWS();
+    } else {
+      sendSignal({ type: 'find_match' });
+    }
   };
 
   const handleStopMatch = () => {
@@ -328,7 +279,6 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="dashboard-layout">
-      {/* Sidebar Navigation */}
       <aside className="dashboard-sidebar">
         <button 
           className={`btn-start-create btn-new-project ${isSearching ? 'searching-pulse' : ''}`}
@@ -371,11 +321,6 @@ export const Dashboard: React.FC = () => {
                 </>
               )}
             </select>
-            {isRegularUser && (
-              <small style={{ color: '#888', fontSize: '11px', marginTop: '4px', display: 'block' }}>
-                قم بترقية حسابك لتصفية الفئات (Youtubers / Investors)
-              </small>
-            )}
           </div>
         </nav>
 
@@ -390,7 +335,6 @@ export const Dashboard: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content Area */}
       <main className="dashboard-main">
         <header className="dashboard-header">
           <div className="match-status-indicator">
@@ -406,7 +350,6 @@ export const Dashboard: React.FC = () => {
 
         <div className="dashboard-content">
           <div className="cam-studio-wrapper">
-            {/* Local Video Box */}
             <div className="cam-box local-cam">
               <span className="cam-label">YOU ({user.fullName || 'Mohamad'})</span>
               <video 
@@ -418,7 +361,6 @@ export const Dashboard: React.FC = () => {
               />
             </div>
 
-            {/* Remote Video Box */}
             <div className={`cam-box remote-cam ${isSearching ? 'searching' : ''}`}>
               <span className="cam-label">
                 {isSearching 
@@ -457,7 +399,6 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Actions Control Bar */}
           <div className="match-controls-bar">
             <button className={`btn-control btn-mic ${isMuted ? 'active-off' : ''}`} onClick={toggleMute}>
               {isMuted ? 'Unmute' : 'Mute'}
