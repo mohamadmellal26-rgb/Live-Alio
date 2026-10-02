@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,16 +21,25 @@ import (
 
 var jwtSecret = []byte("super_secret_live_aleo_key_2026")
 
+// توسيع هيكل المستخدم ليدعم جميع بيانات البروفايل
 type User struct {
-	ID           string `json:"id"`
-	FullName     string `json:"fullName"`
-	Email        string `json:"email"`
-	Password     string `json:"-"`
-	Role         string `json:"role"`
-	Avatar       string `json:"avatar,omitempty"`
-	YoutubeUrl   string `json:"youtubeUrl,omitempty"`
-	PyCardId     string `json:"pyCardId,omitempty"`
-	ProjectProof string `json:"projectProof,omitempty"`
+	ID             string    `json:"id"`
+	FullName       string    `json:"fullName"`
+	Email          string    `json:"email"`
+	Password       string    `json:"-"`
+	Role           string    `json:"role"`
+	Avatar         string    `json:"avatarUrl,omitempty"`
+	Bio            string    `json:"bio,omitempty"`
+	Location       string    `json:"location,omitempty"`
+	Website        string    `json:"website,omitempty"`
+	TargetIndustry string    `json:"targetIndustry,omitempty"`
+	Skills         []string  `json:"skills,omitempty"`
+	FocusAreas     []string  `json:"focusAreas,omitempty"`
+	IsVerified     bool      `json:"isVerified"`
+	JoinedDate     string    `json:"joinedDate"`
+	YoutubeUrl     string    `json:"youtubeUrl,omitempty"`
+	PyCardId       string    `json:"pyCardId,omitempty"`
+	ProjectProof   string    `json:"projectProof,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -64,23 +74,34 @@ type Client struct {
 	Peer         *Client         `json:"-"`
 	RoomID       string          `json:"roomId,omitempty"`
 	sendChan     chan []byte     `json:"-"`
+	isClosed     bool
 	mu           sync.Mutex
 }
 
 func (c *Client) SafeWrite(msg []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.sendChan != nil {
-		select {
-		case c.sendChan <- msg:
-		default:
-			log.Printf("Send buffer full for client %s, dropping message", c.ID)
-		}
+	if c.isClosed || c.sendChan == nil {
+		return
+	}
+	select {
+	case c.sendChan <- msg:
+	default:
+		log.Printf("Send buffer full for client %s, dropping message", c.ID)
+	}
+}
+
+func (c *Client) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.isClosed {
+		c.isClosed = true
+		close(c.sendChan)
 	}
 }
 
 type UserStore struct {
-	users map[string]*User
+	users map[string]*User // key: email or id
 	mu    sync.RWMutex
 }
 
@@ -281,7 +302,7 @@ func parseToken(tokenStr string) (jwt.MapClaims, error) {
 func saveUploadedFile(c *fiber.Ctx, formKey string) (string, error) {
 	file, err := c.FormFile(formKey)
 	if err != nil {
-		return "", nil // الملف غير موجود في الطلب
+		return "", nil
 	}
 
 	ext := filepath.Ext(file.Filename)
@@ -300,7 +321,7 @@ func main() {
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
-		BodyLimit: 20 * 1024 * 1024, // زيادة الحد لتسجيل الملفات والصور
+		BodyLimit: 20 * 1024 * 1024,
 	})
 
 	app.Use(logger.New())
@@ -315,10 +336,35 @@ func main() {
 
 	api := app.Group("/api/v1")
 
+	// Endpoint لجلب بيانات المستخدم للـ ProfilePage
+	api.Get("/user/profile", func(c *fiber.Ctx) error {
+		identifier := c.Query("identifier")
+		
+		userStore.mu.RLock()
+		defer userStore.mu.RUnlock()
+
+		var foundUser *User
+		for _, u := range userStore.users {
+			if strings.EqualFold(u.Email, identifier) || u.ID == identifier || strings.EqualFold(u.FullName, identifier) {
+				foundUser = u
+				break
+			}
+		}
+
+		if foundUser == nil {
+			return c.Status(404).JSON(fiber.Map{"error": "User not found"})
+		}
+
+		return c.JSON(fiber.Map{
+			"profile":      foundUser,
+			"contents":     []interface{}{}, // يمكن إضافة الـ Uploads لاحقاً
+			"primaryColor": "#e056fd",
+		})
+	})
+
 	api.Post("/signup", func(c *fiber.Ctx) error {
 		var req RegisterRequest
 
-		// محاولة قراءة البيانات سواء كانت JSON أو Multipart Form
 		if err := c.BodyParser(&req); err != nil {
 			req.FullName = c.FormValue("fullName")
 			req.Email = c.FormValue("email")
@@ -348,14 +394,12 @@ func main() {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to process password"})
 		}
 
-		// حفظ صورة الملف الشخصي إذا تم رفعها
 		avatarPath, err := saveUploadedFile(c, "avatar")
 		if err != nil {
 			userStore.mu.Unlock()
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to save avatar image"})
 		}
 
-		// حفظ إثبات المشروع (إضافي) إذا تم رفعه
 		proofPath, err := saveUploadedFile(c, "projectProof")
 		if err != nil {
 			userStore.mu.Unlock()
@@ -369,6 +413,9 @@ func main() {
 			Password:     string(hashedPassword),
 			Role:         req.Role,
 			Avatar:       avatarPath,
+			Bio:          "Full-Stack Software Engineer & Platform Innovator",
+			JoinedDate:   time.Now().Format("Jan 2006"),
+			IsVerified:   true,
 			YoutubeUrl:   req.YoutubeUrl,
 			PyCardId:     req.PyCardId,
 			ProjectProof: proofPath,
@@ -475,7 +522,7 @@ func main() {
 
 		defer func() {
 			hub.UnregisterClient(client)
-			close(client.sendChan)
+			client.Close()
 			c.Close()
 		}()
 
@@ -495,20 +542,20 @@ func main() {
 				if sig.Type == "leave" {
 					hub.mu.Lock()
 					if client.Peer != nil {
-                        peer := client.Peer
-                        peer.Peer = nil
-                        peer.RoomID = ""
+						peer := client.Peer
+						peer.Peer = nil
+						peer.RoomID = ""
 
-                        disconnectMsg, _ := json.Marshal(map[string]string{
-                            "type":    "peer_disconnected",
-                            "message": "Partner left the stream",
-                        })
-                        peer.SafeWrite(disconnectMsg)
-                    }
-                    client.Peer = nil
-                    client.RoomID = ""
-                    hub.mu.Unlock()
-                    continue
+						disconnectMsg, _ := json.Marshal(map[string]string{
+							"type":    "peer_disconnected",
+							"message": "Partner left the stream",
+						})
+						peer.SafeWrite(disconnectMsg)
+					}
+					client.Peer = nil
+					client.RoomID = ""
+					hub.mu.Unlock()
+					continue
 				}
 			}
 

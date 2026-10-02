@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   ChevronDown, 
   Search, 
@@ -22,12 +22,11 @@ interface EventItem {
   id: number;
   title: string;
   highlight: string;
-  durationSeconds: number; // مدة الحدث بالثواني (24 ساعة)
+  durationSeconds: number;
   actionText: string;
   badge: string;
 }
 
-// 24 ساعة بالثواني = 86400
 const DAY_IN_SECONDS = 86400;
 
 const EVENTS_DATA: EventItem[] = [
@@ -74,6 +73,7 @@ const EVENTS_DATA: EventItem[] = [
 ];
 
 export const Header: React.FC = () => {
+  const navigate = useNavigate();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
@@ -106,7 +106,6 @@ export const Header: React.FC = () => {
     }
   }, []);
 
-  // إدارة التوقيت المستمر والمزامنة مع localStorage لمنع العودة لـ 24 ساعة عند الـ Reload
   useEffect(() => {
     const getTargetTime = (index: number) => {
       const savedTarget = localStorage.getItem(`event_target_time_${index}`);
@@ -125,10 +124,7 @@ export const Header: React.FC = () => {
       const remaining = Math.max(0, Math.floor((targetTime - now) / 1000));
 
       if (remaining <= 0) {
-        // تنظيف التوقيت القديم للحدث الحالي
         localStorage.removeItem(`event_target_time_${currentEventIndex}`);
-        
-        // الانتقال للحدث التالي
         const nextIndex = (currentEventIndex + 1) % EVENTS_DATA.length;
         setCurrentEventIndex(nextIndex);
         localStorage.setItem('event_current_index', nextIndex.toString());
@@ -143,7 +139,6 @@ export const Header: React.FC = () => {
     return () => clearInterval(timer);
   }, [currentEventIndex]);
 
-  // تحويل الثواني المتبقية إلى صيغة HH:MM:SS
   const formatTime = (totalSeconds: number) => {
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -155,6 +150,16 @@ export const Header: React.FC = () => {
   };
 
   const timeObj = formatTime(secondsLeft);
+
+  // تحديد مسار الملف الشخصي للمستخدم الحالي
+  const profilePath = user?.username 
+    ? `/profile/${user.username}` 
+    : '/profile';
+
+  const handleGoToProfile = () => {
+    setIsUserDropdownOpen(false);
+    navigate(profilePath);
+  };
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -201,7 +206,7 @@ export const Header: React.FC = () => {
 
   return (
     <header className="aleo-header" dir="ltr">
-      {/* 1. Automatic Top Event Banner (Persistent Countdown) */}
+      {/* 1. Automatic Top Event Banner */}
       <div className="top-banner">
         <div className="event-badge-tag">{currentEvent.badge}</div>
 
@@ -416,7 +421,6 @@ export const Header: React.FC = () => {
               )}
             </div>
             
-            {/* التعديل الأساسي هنا: تم تحويل الزر إلى Link يوجه لـ /dashboard */}
             <Link to="/dashboard" className="btn-start-create" style={{ textDecoration: 'none' }}>
               Start Live Match
             </Link>
@@ -462,10 +466,48 @@ export const Header: React.FC = () => {
                     padding: '8px 0',
                     color: '#f3f4f6'
                   }}>
-                    <div style={{ padding: '8px 16px', borderBottom: '1px solid #374151', fontSize: '13px' }}>
+                    {/* رأس القائمة للوصول المباشر للملف الشخصي */}
+                    <div 
+                      onClick={handleGoToProfile}
+                      style={{ 
+                        padding: '10px 16px', 
+                        borderBottom: '1px solid #374151', 
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s'
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
                       <div style={{ fontWeight: '600', color: '#fff' }}>{user.fullName || 'User'}</div>
                       <div style={{ color: '#9ca3af', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.email}</div>
                     </div>
+
+                    {/* خيار الذهاب للبروفايل */}
+                    <button 
+                      onClick={handleGoToProfile}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        width: '100%',
+                        padding: '10px 16px',
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        color: '#f3f4f6',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        textAlign: 'left',
+                        transition: 'background 0.2s'
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      <UserIcon size={16} />
+                      <span>My Profile</span>
+                    </button>
+
+                    {/* زر تسجيل الخروج */}
                     <button 
                       onClick={handleLogout}
                       style={{

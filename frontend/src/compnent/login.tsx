@@ -45,7 +45,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
 
   const wsRef = useRef<WebSocket | null>(null);
 
-  const API_BASE_URL = 'https://live-alio.onrender.com/api/v1';
+  const API_BASE_URL = 'https://live-alio-1.onrender.com/api/v1';
 
   useEffect(() => {
     return () => {
@@ -81,7 +81,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
       wsRef.current.close();
     }
 
-    const ws = new WebSocket(`wss://live-alio.onrender.com/ws/live?role=${activeRole}&token=${token}`);
+    const ws = new WebSocket(`wss://live-alio-1.onrender.com/ws/live?role=${activeRole}&token=${token}`);
     wsRef.current = ws;
 
     ws.onopen = () => console.log('Connected to WebSocket server as:', activeRole);
@@ -196,17 +196,25 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
         localStorage.setItem('token', data.token);
       }
 
-      // بناء كائن المستخدم وتأكيد حفظ الصورة بشكل دائم في LocalStorage
-      const userData = data.user || {
+      const rawUserData = data.user || {
         fullName,
         email,
         role,
         youtubeUrl,
       };
 
-      if (avatarPreview && !userData.avatar && !userData.avatarUrl) {
-        userData.avatarUrl = avatarPreview;
-      }
+      // تحديد اسم مستخدم افتراضي آمن في حالة عدم توفره من الـ API
+      const fallbackUsername = 
+        rawUserData.username || 
+        rawUserData.id || 
+        rawUserData._id || 
+        (rawUserData.fullName ? rawUserData.fullName.replace(/\s+/g, '').toLowerCase() : '') || 
+        email.split('@')[0];
+
+      const userData = {
+        ...rawUserData,
+        username: fallbackUsername
+      };
 
       localStorage.setItem('user', JSON.stringify(userData));
 
@@ -220,7 +228,8 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
       } else if (onBackToHome) {
         onBackToHome();
       } else {
-        window.location.href = '/protfile';
+        // التوجيه الصحيح بالرابط الديناميكي
+        window.location.href = `/profile/${userData.username}`;
       }
 
     } catch (err: any) {

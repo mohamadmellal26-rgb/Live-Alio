@@ -3,7 +3,7 @@ import './App.css';
 import Header from './compnent/header';
 import HeroSection from './compnent/hirosenction';
 import Footer from './compnent/Footer';
-import Login from './compnent/login'; // تأكد من اسم المجلد والمكون لديك
+import Login from './compnent/login';
 import Dashboard from './compnent/Dashboard';
 import Profile from './compnent/Profile';
 
@@ -15,14 +15,20 @@ function App() {
         
         <main className="app-content">
           <Routes>
-            <Route path="/protfile" element={<Profile />} />
-
-            <Route path="/Dashboard" element={<Dashboard />} />
             {/* الصفحة الرئيسية */}
             <Route path="/" element={<HeroSection />} />
-            
+
             {/* صفحة تسجيل الدخول */}
             <Route path="/login" element={<Login />} />
+
+            {/* لوحة التحكم */}
+            <Route path="/Dashboard" element={<Dashboard />} />
+
+            {/* مسار الملف الشخصي الديناميكي (Path Parameter) */}
+            <Route path="/profile/:username" element={<Profile />} />
+
+            {/* إذا أردت دعم رابط بدون اسم مستخدم ليتم توجيهه إلى الملف الشخصي الحالي */}
+            <Route path="/profile" element={<Profile />} />
           </Routes>
         </main>
 

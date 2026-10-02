@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { 
   Zap, 
   Globe, 
@@ -10,17 +11,31 @@ import {
   Star,
   ShieldCheck,
   User as UserIcon,
-  Mail
+  Mail,
+  Edit3,
+  Plus
 } from 'lucide-react';
 import { useUserProfile } from './hooks/useUserProfile';
 import './Profile.css';
 
-// Vite Environment Variable
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
 
 export const ProfilePage: React.FC = () => {
-  const { data, isLoading, error } = useUserProfile();
+  // 1. استخراج اسم المستخدم من المسار
+  const { username: pathUsername } = useParams<{ username?: string }>();
+  const [searchParams] = useSearchParams();
+  const queryUsername = searchParams.get('user') || searchParams.get('protfile');
+
+  const targetUsername = pathUsername || queryUsername || undefined;
+
+  const { data, isLoading, error } = useUserProfile(targetUsername);
+
   const [activeTab, setActiveTab] = useState<'content' | 'reviews' | 'about'>('content');
+  const [imgError, setImgError] = useState(false);
+
+  // حالة التعديل وإضافة المحتوى
+  const [isEditing, setIsEditing] = useState(false);
+  const [showAddContentModal, setShowAddContentModal] = useState(false);
 
   if (isLoading) {
     return (
@@ -34,13 +49,29 @@ export const ProfilePage: React.FC = () => {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#ff22ff', gap: '1rem' }}>
         <ShieldCheck size={48} />
-        <h2>Access Denied / Not Logged In</h2>
-        <p style={{ color: '#a1a1aa' }}>Please sign in to view your profile dashboard.</p>
+        <h2>Access Denied / Profile Not Found</h2>
+        <p style={{ color: '#a1a1aa' }}>
+          {targetUsername ? `Could not load profile for "${targetUsername}".` : 'Please sign in to view your profile dashboard.'}
+        </p>
       </div>
     );
   }
 
   const { profile: user, contents = [], primaryColor = '#e056fd' } = data;
+
+  // 2. التحقق من ملكية الحساب (الكوكي / التوكن في LocalStorage)
+  const storedUserRaw = localStorage.getItem('user');
+  const token = localStorage.getItem('token');
+  const currentUser = storedUserRaw ? JSON.parse(storedUserRaw) : null;
+
+  const isOwner = Boolean(
+    token && currentUser && (
+      currentUser.id === user.id ||
+      currentUser._id === user.id ||
+      currentUser.email === user.email ||
+      !targetUsername
+    )
+  );
 
   const getFullImageUrl = (path?: string) => {
     if (!path) return null;
@@ -50,7 +81,6 @@ export const ProfilePage: React.FC = () => {
     return `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
   };
 
-  // حماية من خطأ TypeScript عبر Casting المرن للـ Type
   const avatarPath = user.avatarUrl || (user as unknown as { avatar?: string }).avatar;
   const avatarSrc = getFullImageUrl(avatarPath);
 
@@ -63,15 +93,15 @@ export const ProfilePage: React.FC = () => {
         <div className="profile-header-wrapper">
           <div className="profile-header-content">
             <div className="profile-avatar-group">
-              <div className="profile-avatar-wrapper">
-                {avatarSrc ? (
+              <div className="profile-avatar-wrapper" style={{ position: 'relative' }}>
+                {avatarSrc && !imgError ? (
                   <img 
                     src={avatarSrc} 
                     alt={user.fullName} 
                     className="profile-avatar-img" 
                     style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-                    onError={(e) => {
-                      (e.target as HTMLElement).style.display = 'none';
+                    onError={() => {
+                      setImgError(true);
                     }}
                   />
                 ) : (
@@ -79,6 +109,7 @@ export const ProfilePage: React.FC = () => {
                     <UserIcon size={40} />
                   </div>
                 )}
+
                 {user.isOnlineLive && (
                   <div className="live-badge-status">
                     <span className="live-dot" /> Live
@@ -95,13 +126,35 @@ export const ProfilePage: React.FC = () => {
               </div>
             </div>
 
-            <div className="profile-actions">
+            {/* الأزرار الديناميكية بناءً على حالة الملكية (isOwner) */}
+            <div className="profile-actions" style={{ display: 'flex', gap: '0.75rem' }}>
               <button className="btn-secondary-action">
                 <Share2 size={16} /> Share
               </button>
-              <button className="btn-pitch-live" style={{ background: primaryColor }}>
-                <Zap size={18} /> Connect
-              </button>
+
+              {isOwner ? (
+                <>
+                  <button 
+                    className="btn-secondary-action" 
+                    onClick={() => setIsEditing(true)}
+                    style={{ borderColor: primaryColor, color: '#fff' }}
+                  >
+                    <Edit3 size={16} /> Edit Profile
+                  </button>
+
+                  <button 
+                    className="btn-pitch-live" 
+                    onClick={() => setShowAddContentModal(true)}
+                    style={{ background: primaryColor }}
+                  >
+                    <Plus size={18} /> Add Content
+                  </button>
+                </>
+              ) : (
+                <button className="btn-pitch-live" style={{ background: primaryColor }}>
+                  <Zap size={18} /> Connect
+                </button>
+              )}
             </div>
           </div>
 
@@ -230,7 +283,18 @@ export const ProfilePage: React.FC = () => {
             {activeTab === 'content' && (
               <div>
                 {contents.length === 0 ? (
-                  <p style={{ color: '#a1a1aa', textAlign: 'center', padding: '2rem 0' }}>No content or projects published yet.</p>
+                  <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                    <p style={{ color: '#a1a1aa', marginBottom: '1rem' }}>No content or projects published yet.</p>
+                    {isOwner && (
+                      <button 
+                        className="btn-pitch-live" 
+                        onClick={() => setShowAddContentModal(true)}
+                        style={{ background: primaryColor }}
+                      >
+                        <Plus size={16} /> Upload First Project
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <div className="pitch-grid">
                     {contents.map((item) => (

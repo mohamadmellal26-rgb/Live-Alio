@@ -42,9 +42,10 @@ interface UserSessionResponse {
   primaryColor?: string;
 }
 
-const API_BASE_URL = 'https://live-alio.onrender.com/api/v1';
+// تصحيح الرابط بإضافة "-1" ليتطابق مع Auth.tsx
+const API_BASE_URL = 'https://live-alio-1.onrender.com/api/v1';
 
-export const useUserProfile = () => {
+export const useUserProfile = (username?: string) => {
   const [data, setData] = useState<UserSessionResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,55 +54,66 @@ export const useUserProfile = () => {
     const fetchUserProfile = async () => {
       try {
         setIsLoading(true);
+        setError(null);
+
         const token = localStorage.getItem('token');
         const storedUserRaw = localStorage.getItem('user');
+        const parsedUser = storedUserRaw ? JSON.parse(storedUserRaw) : null;
 
-        if (!token && !storedUserRaw) {
-          throw new Error('No authentication token found.');
-        }
+        // تحديد مسار Request الصحيح
+        const endpoint = username 
+          ? `${API_BASE_URL}/users/${username}`
+          : `${API_BASE_URL}/profile`;
 
-        let isSuccess = false;
+        // 1. محاولة جلب البيانات من الـ API
+        try {
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
 
-        // 1. محاولة جلب البيانات الحقيقية من API الـ Render
-        if (token) {
-          try {
-            const response = await fetch(`${API_BASE_URL}/profile`, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-              },
-            });
-
-            if (response.ok) {
-              const result: UserSessionResponse = await response.json();
-              
-              // معالجة رابط الصورة القادم من الـ API
-              if (result.profile) {
-                const apiAvatar = result.profile.avatarUrl || (result.profile as any).avatar;
-                if (apiAvatar) {
-                  result.profile.avatarUrl = apiAvatar;
-                }
-              }
-
-              setData(result);
-              isSuccess = true;
-            }
-          } catch (networkErr) {
-            console.warn('Network or API Error, fallback to LocalStorage:', networkErr);
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
           }
+
+          const response = await fetch(endpoint, {
+            method: 'GET',
+            headers,
+          });
+
+          if (response.ok) {
+            const result: UserSessionResponse = await response.json();
+            
+            if (result.profile) {
+              const apiAvatar = result.profile.avatarUrl || (result.profile as any).avatar;
+              if (apiAvatar) {
+                result.profile.avatarUrl = apiAvatar;
+              }
+            }
+
+            setData(result);
+            setIsLoading(false);
+            return;
+          }
+        } catch (networkErr) {
+          console.warn('Network or API Error, falling back to local user:', networkErr);
         }
 
-        // 2. القراءة من LocalStorage في حال عدم توفر رد الـ API
-        if (!isSuccess && storedUserRaw) {
-          const parsedUser = JSON.parse(storedUserRaw);
+        // 2. Fallback: إذا فشل الـ API وكان البروفايل المعروض هو نفس المستخدم الحالي في localStorage
+        const currentUserId = parsedUser?.id || parsedUser?._id;
+        const currentUsername = parsedUser?.username;
 
+        const isSelfProfile = 
+          !username || 
+          username === currentUserId || 
+          username === currentUsername;
+
+        if (parsedUser && isSelfProfile) {
           const rawAvatar = parsedUser.avatarUrl || parsedUser.avatar || parsedUser.profilePicture || '';
           
           setData({
             profile: {
-              id: parsedUser.id || parsedUser._id || '',
-              fullName: parsedUser.fullName || parsedUser.name || '',
+              id: parsedUser.id || parsedUser._id || '1',
+              fullName: parsedUser.fullName || parsedUser.name || 'User Profile',
               role: parsedUser.role || 'user',
               email: parsedUser.email || '',
               isVerified: Boolean(parsedUser.isVerified),
@@ -119,8 +131,8 @@ export const useUserProfile = () => {
             contents: parsedUser.contents || [],
             primaryColor: '#e056fd'
           });
-        } else if (!isSuccess) {
-          throw new Error('Failed to load profile session.');
+        } else {
+          throw new Error(username ? `Could not load profile for "${username}".` : 'Failed to load profile session.');
         }
       } catch (err: any) {
         setError(err.message || 'Error loading profile.');
@@ -130,7 +142,7 @@ export const useUserProfile = () => {
     };
 
     fetchUserProfile();
-  }, []);
+  }, [username]);
 
   return { data, isLoading, error };
 };
