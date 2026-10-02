@@ -32,7 +32,7 @@ type User struct {
 	Role         string `json:"role"` // "user", "youtuber", "investor"
 	YoutubeUrl   string `json:"youtubeUrl,omitempty"`
 	PyCardId     string `json:"pyCardId,omitempty"`
-	ProjectProof string `json:"projectProof,omitempty"` // Path to uploaded proof file
+	ProjectProof string `json:"projectProof,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -50,15 +50,28 @@ type LoginRequest struct {
 }
 
 type Client struct {
-	ID         string          `json:"id"`
-	UserID     string          `json:"userId"`
-	FullName   string          `json:"fullName"`
-	Conn       *websocket.Conn `json:"-"`
-	UserRole   string          `json:"userRole"`   // "user", "youtuber", "investor" (من التوكن الأصلي)
-	TargetFilter string        `json:"targetFilter"` // "all", "youtuber", "investor" (الفلتر المختار)
-	Peer       *Client         `json:"-"`          // الطرف الآخر المقترن به
-	RoomID     string          `json:"roomId,omitempty"`
-	mu         sync.Mutex
+	ID           string          `json:"id"`
+	UserID       string          `json:"userId"`
+	FullName     string          `json:"fullName"`
+	Conn         *websocket.Conn `json:"-"`
+	UserRole     string          `json:"userRole"`     // "user", "youtuber", "investor"
+	TargetFilter string          `json:"targetFilter"` // "all", "youtuber", "investor"
+	Peer         *Client         `json:"-"`
+	RoomID       string          `json:"roomId,omitempty"`
+	sendChan     chan []byte     `json:"-"` // حماية من Concurrent Writes
+	mu           sync.Mutex
+}
+
+func (c *Client) SafeWrite(msg []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sendChan != nil {
+		select {
+		case c.sendChan <- msg:
+		default:
+			log.Printf("Send buffer full for client %s, dropping message", c.ID)
+		}
+	}
 }
 
 // =================== In-Memory Database & Hub ===================
@@ -71,9 +84,9 @@ type UserStore struct {
 var userStore = &UserStore{users: make(map[string]*User)}
 
 type Hub struct {
-	youtuberQueue []*Client // اليوتيوبرز المتفرغون
-	investorQueue []*Client // المستثمرون المتفرغون
-	allQueue      []*Client // المستخدمون العاديون / المطابقة العامة
+	youtuberQueue []*Client
+	investorQueue []*Client
+	allQueue      []*Client
 	clients       map[string]*Client
 	mu            sync.Mutex
 }
@@ -89,71 +102,58 @@ func newHub() *Hub {
 
 func (h *Hub) RegisterClient(client *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	h.clients[client.ID] = client
 	log.Printf("Client registered: %s (User: %s, RealRole: %s, TargetFilter: %s)",
 		client.ID, client.FullName, client.UserRole, client.TargetFilter)
 
-	h.matchClient(client)
+	h.matchClientUnlocked(client)
+	h.mu.Unlock()
 }
 
-// دالة مطابقة ذكية تربط المستهدف بالنوع المطلوب
-func (h *Hub) matchClient(client *Client) {
-	// 1. إذا كان العميل يطلب المطابقة مع Youtuber حصراً (ويملك الصلاحية)
-	if client.TargetFilter == "youtuber" {
-		if len(h.youtuberQueue) > 0 {
-			peer := h.youtuberQueue[0]
-			h.youtuberQueue = h.youtuberQueue[1:]
-			h.pairClients(client, peer)
-			return
-		}
-	}
-
-	// 2. إذا كان العميل يطلب المطابقة مع Investor حصراً (ويملك الصلاحية)
-	if client.TargetFilter == "investor" {
-		if len(h.investorQueue) > 0 {
-			peer := h.investorQueue[0]
-			h.investorQueue = h.investorQueue[1:]
-			h.pairClients(client, peer)
-			return
-		}
-	}
-
-	// 3. إذا كان العميل نفسه صانع محتوى أو مستثمر، يتم إدراجه في طابور التخصص المقابل ليجده المفلترون
-	if client.UserRole == "youtuber" {
-		h.youtuberQueue = append(h.youtuberQueue, client)
-		return
-	}
-	if client.UserRole == "investor" {
-		h.investorQueue = append(h.investorQueue, client)
+// دالة المطابقة (يجب استدعاؤها والـ Lock مرفوع لمنع الـ Deadlock)
+func (h *Hub) matchClientUnlocked(client *Client) {
+	// 1. إذا كان يطلب Youtuber
+	if client.TargetFilter == "youtuber" && len(h.youtuberQueue) > 0 {
+		peer := h.youtuberQueue[0]
+		h.youtuberQueue = h.youtuberQueue[1:]
+		h.pairClientsUnlocked(client, peer)
 		return
 	}
 
-	// 4. المطابقة العادية المباشرة للجميع (All Users Queue)
-	if len(h.allQueue) > 0 {
+	// 2. إذا كان يطلب Investor
+	if client.TargetFilter == "investor" && len(h.investorQueue) > 0 {
+		peer := h.investorQueue[0]
+		h.investorQueue = h.investorQueue[1:]
+		h.pairClientsUnlocked(client, peer)
+		return
+	}
+
+	// 3. المطابقة من الطابور العام (All Queue)
+	if client.TargetFilter == "all" && len(h.allQueue) > 0 {
 		peer := h.allQueue[0]
 		h.allQueue = h.allQueue[1:]
-		h.pairClients(client, peer)
+		h.pairClientsUnlocked(client, peer)
 		return
 	}
 
-	// إضافة العميل إلى طابور الانتظار العام
-	h.allQueue = append(h.allQueue, client)
+	// 4. إذا لم يجد مطابقة، يضاف للطابور المناسب بحسب دوره الفعلي
+	if client.UserRole == "youtuber" {
+		h.youtuberQueue = append(h.youtuberQueue, client)
+	} else if client.UserRole == "investor" {
+		h.investorQueue = append(h.investorQueue, client)
+	} else {
+		h.allQueue = append(h.allQueue, client)
+	}
 }
 
-func (h *Hub) pairClients(c1, c2 *Client) {
+func (h *Hub) pairClientsUnlocked(c1, c2 *Client) {
 	roomID := uuid.New().String()
 
-	c1.mu.Lock()
-	c1.Peer = c2
 	c1.RoomID = roomID
-	c1.mu.Unlock()
+	c1.Peer = c2
 
-	c2.mu.Lock()
-	c2.Peer = c1
 	c2.RoomID = roomID
-	c2.mu.Unlock()
+	c2.Peer = c1
 
 	msg1, _ := json.Marshal(map[string]interface{}{
 		"type":      "match_found",
@@ -162,7 +162,7 @@ func (h *Hub) pairClients(c1, c2 *Client) {
 		"peerName":  c2.FullName,
 		"initiator": true,
 	})
-	c1.Conn.WriteMessage(websocket.TextMessage, msg1)
+	c1.SafeWrite(msg1)
 
 	msg2, _ := json.Marshal(map[string]interface{}{
 		"type":      "match_found",
@@ -171,7 +171,7 @@ func (h *Hub) pairClients(c1, c2 *Client) {
 		"peerName":  c1.FullName,
 		"initiator": false,
 	})
-	c2.Conn.WriteMessage(websocket.TextMessage, msg2)
+	c2.SafeWrite(msg2)
 
 	log.Printf("Matched room %s: %s <---> %s", roomID, c1.FullName, c2.FullName)
 }
@@ -188,23 +188,24 @@ func (h *Hub) UnregisterClient(client *Client) {
 
 	if client.Peer != nil {
 		peer := client.Peer
-		peer.mu.Lock()
 		peer.Peer = nil
 		peer.RoomID = ""
-		peer.mu.Unlock()
 
 		disconnectMsg, _ := json.Marshal(map[string]string{
 			"type":    "peer_disconnected",
 			"message": "Partner left the stream",
 		})
-		peer.Conn.WriteMessage(websocket.TextMessage, disconnectMsg)
+		peer.SafeWrite(disconnectMsg)
+
+		// إعادة الـ Peer المتبقي للبحث عن مطابقة جديدة تلقائياً
+		h.matchClientUnlocked(peer)
 	}
 
 	log.Printf("Client disconnected: %s", client.ID)
 }
 
 func removeClientFromSlice(slice []*Client, target *Client) []*Client {
-	result := make([]*Client, 0)
+	result := make([]*Client, 0, len(slice))
 	for _, c := range slice {
 		if c.ID != target.ID {
 			result = append(result, c)
@@ -267,8 +268,14 @@ func main() {
 	api.Post("/signup", func(c *fiber.Ctx) error {
 		var req RegisterRequest
 
+		// دعم Multipart Form & JSON معاً
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+			req.FullName = c.FormValue("fullName")
+			req.Email = c.FormValue("email")
+			req.Password = c.FormValue("password")
+			req.Role = c.FormValue("role")
+			req.YoutubeUrl = c.FormValue("youtubeUrl")
+			req.PyCardId = c.FormValue("pyCardId")
 		}
 
 		if req.Email == "" || req.Password == "" || req.FullName == "" {
@@ -302,19 +309,19 @@ func main() {
 
 			projectProofPath = fmt.Sprintf("./uploads/%s_%s", uuid.New().String(), file.Filename)
 			if err := c.SaveFile(file, projectProofPath); err != nil {
-                return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
+				return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
 			}
 		}
 
 		userStore.mu.Lock()
-		defer userStore.mu.Unlock()
-
 		if _, exists := userStore.users[req.Email]; exists {
+			userStore.mu.Unlock()
 			return c.Status(400).JSON(fiber.Map{"error": "Email already exists"})
 		}
 
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
+			userStore.mu.Unlock()
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to process password"})
 		}
 
@@ -330,6 +337,7 @@ func main() {
 		}
 
 		userStore.users[req.Email] = newUser
+		userStore.mu.Unlock()
 
 		token, err := generateToken(newUser)
 		if err != nil {
@@ -367,7 +375,7 @@ func main() {
 		})
 	})
 
-	// ---------------- WebSocket Upgrade Check & Strict Auth ----------------
+	// ---------------- WebSocket Auth Check ----------------
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			tokenStr := c.Query("token")
@@ -381,7 +389,6 @@ func main() {
 				}
 			}
 
-			// للزوار غير المسجلين
 			guestID := uuid.New().String()
 			c.Locals("userId", guestID)
 			c.Locals("fullName", "Guest_"+guestID[:5])
@@ -391,20 +398,18 @@ func main() {
 		return fiber.ErrUpgradeRequired
 	})
 
-	// ---------------- WebSocket Connection Point ----------------
+	// ---------------- WebSocket Live Route ----------------
 	app.Get("/ws/live", websocket.New(func(c *websocket.Conn) {
-		// 1. الحصول على دور المستخدم الفعلي الموثق من التوكن (JWT)
 		realRole, _ := c.Locals("role").(string)
 		if realRole == "" {
 			realRole = "user"
 		}
 
-		// 2. قراءة الفلتر المطلوبة من الـ Query Parameter
 		targetFilter := c.Query("role")
 
-		// 3. الحماية الأمنية: منع المستخدم العادي من استخدام فلاتر خاصة بالحسابات المحددة
+		// حماية أمنية: منع المستخدم العادي من اختيار فلاتر التخصص
 		if realRole == "user" && (targetFilter == "youtuber" || targetFilter == "investor") {
-			targetFilter = "all" // إلغاء الفلتر ومنع الاختراق
+			targetFilter = "all"
 		}
 
 		if targetFilter != "youtuber" && targetFilter != "investor" {
@@ -421,15 +426,27 @@ func main() {
 			Conn:         c,
 			UserRole:     realRole,
 			TargetFilter: targetFilter,
+			sendChan:     make(chan []byte, 256),
 		}
 
 		hub.RegisterClient(client)
 
+		// Goroutine منفصلة لإدارة الكتابة بأمان (Safe Writer Loop)
+		go func() {
+			for msg := range client.sendChan {
+				if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
+					break
+				}
+			}
+		}()
+
 		defer func() {
 			hub.UnregisterClient(client)
+			close(client.sendChan)
 			c.Close()
 		}()
 
+		// القراءة المستمرة من الـ Client
 		for {
 			_, message, err := c.ReadMessage()
 			if err != nil {
@@ -441,9 +458,7 @@ func main() {
 			client.mu.Unlock()
 
 			if peer != nil {
-				if err := peer.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
-					log.Printf("Error sending message to peer: %v", err)
-				}
+				peer.SafeWrite(message)
 			}
 		}
 	}))

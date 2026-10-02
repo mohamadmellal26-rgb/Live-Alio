@@ -21,6 +21,9 @@ export const Dashboard: React.FC = () => {
   const [peerName, setPeerName] = useState<string>('');
   const [isMuted, setIsMuted] = useState(false);
 
+  // حالة عدد المستخدمين المتواجدين حالياً (الحقيقي)
+  const [onlineUsersCount, setOnlineUsersCount] = useState<number>(0);
+
   // عناصر الفيديو
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -29,6 +32,7 @@ export const Dashboard: React.FC = () => {
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const statsWsRef = useRef<WebSocket | null>(null);
 
   // طابور لتخزين ICE Candidates قبل إعداد Remote Description
   const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
@@ -53,6 +57,32 @@ export const Dashboard: React.FC = () => {
       setFilters((prev) => ({ ...prev, targetType: 'all' }));
     }
   }, [user, isRegularUser, filters.targetType]);
+
+  // 1. الاتصال بسيرفر التحديثات لجلب عدد المتواجدين الحقيقي باستمرار
+  useEffect(() => {
+    const token = localStorage.getItem('token') || '';
+    // يمكنك تعديل المسار إذا كان الباك إند لديك يوفر endpoint مخصص للإحصائيات أو نفس المسار
+    const statsWsUrl = `wss://live-alio.onrender.com/ws/live?stats=true&token=${token}`;
+    const statsWs = new WebSocket(statsWsUrl);
+    statsWsRef.current = statsWs;
+
+    statsWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'online_count' && typeof data.count === 'number') {
+          setOnlineUsersCount(data.count);
+        }
+      } catch (err) {
+        console.error('Error parsing stats WS message:', err);
+      }
+    };
+
+    return () => {
+      if (statsWsRef.current) {
+        statsWsRef.current.close();
+      }
+    };
+  }, []);
 
   // تشغيل الكاميرا المحلية عند التحميل
   useEffect(() => {
@@ -145,21 +175,18 @@ export const Dashboard: React.FC = () => {
     const pc = new RTCPeerConnection(rtcConfiguration);
     peerConnectionRef.current = pc;
 
-    // إضافة المسارات المحلية (المرئية والصوتية)
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         pc.addTrack(track, localStreamRef.current!);
       });
     }
 
-    // استلام المسارات من الطرف الآخر
     pc.ontrack = (event) => {
       if (remoteVideoRef.current && event.streams[0]) {
         remoteVideoRef.current.srcObject = event.streams[0];
       }
     };
 
-    // إرسال ICE Candidate المحلي للطرف الآخر
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         sendSignal({ type: 'ice-candidate', candidate: event.candidate });
@@ -172,6 +199,13 @@ export const Dashboard: React.FC = () => {
   // معالجة إشارات الـ WebRTC والـ WebSocket
   const handleSignalingMessage = useCallback(async (data: any) => {
     switch (data.type) {
+      // تحديث عدد المتواجدين عند استقبال الإشارة أثناء جلسة البحث
+      case 'online_count':
+        if (typeof data.count === 'number') {
+          setOnlineUsersCount(data.count);
+        }
+        break;
+
       case 'match_found':
         console.log('Match found! Initiator:', data.initiator);
         setIsSearching(false);
@@ -219,7 +253,6 @@ export const Dashboard: React.FC = () => {
               console.error('Error adding ICE Candidate directly:', e);
             }
           } else {
-            // تخزين الـ candidate مؤقتاً في الطابور لحين إعداد الـ Remote Description
             iceCandidatesQueue.current.push(data.candidate);
           }
         }
@@ -362,7 +395,7 @@ export const Dashboard: React.FC = () => {
         <header className="dashboard-header">
           <div className="match-status-indicator">
             <span className="status-dot online"></span>
-            <span>Online Users: <strong>14,280</strong></span>
+            <span>Online Users: <strong>{onlineUsersCount.toLocaleString()}</strong></span>
           </div>
 
           <div className="header-actions">
@@ -436,7 +469,7 @@ export const Dashboard: React.FC = () => {
                 onClick={handleStopMatch}
                 style={{ backgroundColor: '#ef4444', color: '#fff', border: 'none' }}
               >
-                🛑 Stop Session
+                Stop Session
               </button>
             )}
 
