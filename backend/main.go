@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -24,6 +26,7 @@ type User struct {
 	Email        string `json:"email"`
 	Password     string `json:"-"`
 	Role         string `json:"role"`
+	Avatar       string `json:"avatar,omitempty"`
 	YoutubeUrl   string `json:"youtubeUrl,omitempty"`
 	PyCardId     string `json:"pyCardId,omitempty"`
 	ProjectProof string `json:"projectProof,omitempty"`
@@ -54,6 +57,7 @@ type Client struct {
 	ID           string          `json:"id"`
 	UserID       string          `json:"userId"`
 	FullName     string          `json:"fullName"`
+	Avatar       string          `json:"avatar"`
 	Conn         *websocket.Conn `json:"-"`
 	UserRole     string          `json:"userRole"`
 	TargetFilter string          `json:"targetFilter"`
@@ -125,7 +129,6 @@ func (h *Hub) FindMatchForClient(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// فصل الاتصال القديم إن وجد وإعلام الشريك
 	if client.Peer != nil {
 		peer := client.Peer
 		peer.Peer = nil
@@ -145,7 +148,6 @@ func (h *Hub) FindMatchForClient(client *Client) {
 }
 
 func (h *Hub) matchClientUnlocked(client *Client) {
-	// تأكد من عدم تكراره في الطوابير
 	h.youtuberQueue = removeClientFromSlice(h.youtuberQueue, client)
 	h.investorQueue = removeClientFromSlice(h.investorQueue, client)
 	h.allQueue = removeClientFromSlice(h.allQueue, client)
@@ -190,20 +192,22 @@ func (h *Hub) pairClientsUnlocked(c1, c2 *Client) {
 	c2.Peer = c1
 
 	msg1, _ := json.Marshal(map[string]interface{}{
-		"type":      "match_found",
-		"roomId":    roomID,
-		"peerId":    c2.ID,
-		"peerName":  c2.FullName,
-		"initiator": true,
+		"type":       "match_found",
+		"roomId":     roomID,
+		"peerId":     c2.ID,
+		"peerName":   c2.FullName,
+		"peerAvatar": c2.Avatar,
+		"initiator":  true,
 	})
 	c1.SafeWrite(msg1)
 
 	msg2, _ := json.Marshal(map[string]interface{}{
-		"type":      "match_found",
-		"roomId":    roomID,
-		"peerId":    c1.ID,
-		"peerName":  c1.FullName,
-		"initiator": false,
+		"type":       "match_found",
+		"roomId":     roomID,
+		"peerId":     c1.ID,
+		"peerName":   c1.FullName,
+		"peerAvatar": c1.Avatar,
+		"initiator":  false,
 	})
 	c2.SafeWrite(msg2)
 
@@ -253,6 +257,7 @@ func generateToken(user *User) (string, error) {
 		"email":    user.Email,
 		"fullName": user.FullName,
 		"role":     user.Role,
+		"avatar":   user.Avatar,
 		"exp":      time.Now().Add(time.Hour * 72).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -273,12 +278,29 @@ func parseToken(tokenStr string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
+func saveUploadedFile(c *fiber.Ctx, formKey string) (string, error) {
+	file, err := c.FormFile(formKey)
+	if err != nil {
+		return "", nil // الملف غير موجود في الطلب
+	}
+
+	ext := filepath.Ext(file.Filename)
+	filename := fmt.Sprintf("%s_%d%s", uuid.New().String(), time.Now().UnixNano(), ext)
+	savePath := filepath.Join("./uploads", filename)
+
+	if err := c.SaveFile(file, savePath); err != nil {
+		return "", err
+	}
+
+	return "/uploads/" + filename, nil
+}
+
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
-		BodyLimit: 10 * 1024 * 1024,
+		BodyLimit: 20 * 1024 * 1024, // زيادة الحد لتسجيل الملفات والصور
 	})
 
 	app.Use(logger.New())
@@ -296,6 +318,7 @@ func main() {
 	api.Post("/signup", func(c *fiber.Ctx) error {
 		var req RegisterRequest
 
+		// محاولة قراءة البيانات سواء كانت JSON أو Multipart Form
 		if err := c.BodyParser(&req); err != nil {
 			req.FullName = c.FormValue("fullName")
 			req.Email = c.FormValue("email")
@@ -325,12 +348,30 @@ func main() {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to process password"})
 		}
 
+		// حفظ صورة الملف الشخصي إذا تم رفعها
+		avatarPath, err := saveUploadedFile(c, "avatar")
+		if err != nil {
+			userStore.mu.Unlock()
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to save avatar image"})
+		}
+
+		// حفظ إثبات المشروع (إضافي) إذا تم رفعه
+		proofPath, err := saveUploadedFile(c, "projectProof")
+		if err != nil {
+			userStore.mu.Unlock()
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
+		}
+
 		newUser := &User{
-			ID:       uuid.New().String(),
-			FullName: req.FullName,
-			Email:    req.Email,
-			Password: string(hashedPassword),
-			Role:     req.Role,
+			ID:           uuid.New().String(),
+			FullName:     req.FullName,
+			Email:        req.Email,
+			Password:     string(hashedPassword),
+			Role:         req.Role,
+			Avatar:       avatarPath,
+			YoutubeUrl:   req.YoutubeUrl,
+			PyCardId:     req.PyCardId,
+			ProjectProof: proofPath,
 		}
 
 		userStore.users[req.Email] = newUser
@@ -381,6 +422,7 @@ func main() {
 					c.Locals("userId", claims["userId"])
 					c.Locals("fullName", claims["fullName"])
 					c.Locals("role", claims["role"])
+					c.Locals("avatar", claims["avatar"])
 					return c.Next()
 				}
 			}
@@ -389,6 +431,7 @@ func main() {
 			c.Locals("userId", guestID)
 			c.Locals("fullName", "Guest_"+guestID[:5])
 			c.Locals("role", "user")
+			c.Locals("avatar", "")
 			return c.Next()
 		}
 		return fiber.ErrUpgradeRequired
@@ -407,11 +450,13 @@ func main() {
 
 		userId, _ := c.Locals("userId").(string)
 		fullName, _ := c.Locals("fullName").(string)
+		avatar, _ := c.Locals("avatar").(string)
 
 		client := &Client{
 			ID:           uuid.New().String(),
 			UserID:       userId,
 			FullName:     fullName,
+			Avatar:       avatar,
 			Conn:         c,
 			UserRole:     realRole,
 			TargetFilter: targetFilter,
@@ -442,30 +487,28 @@ func main() {
 
 			var sig SignalMessage
 			if err := json.Unmarshal(message, &sig); err == nil {
-				// عند طلب البحث عن مطابقة جديدة
 				if sig.Type == "find_match" {
 					hub.FindMatchForClient(client)
 					continue
 				}
 
-				// عند النقر على إغلاق الجلسة أو المغادرة
 				if sig.Type == "leave" {
 					hub.mu.Lock()
 					if client.Peer != nil {
-						peer := client.Peer
-						peer.Peer = nil
-						peer.RoomID = ""
+                        peer := client.Peer
+                        peer.Peer = nil
+                        peer.RoomID = ""
 
-						disconnectMsg, _ := json.Marshal(map[string]string{
-							"type":    "peer_disconnected",
-							"message": "Partner left the stream",
-						})
-						peer.SafeWrite(disconnectMsg)
-					}
-					client.Peer = nil
-					client.RoomID = ""
-					hub.mu.Unlock()
-					continue
+                        disconnectMsg, _ := json.Marshal(map[string]string{
+                            "type":    "peer_disconnected",
+                            "message": "Partner left the stream",
+                        })
+                        peer.SafeWrite(disconnectMsg)
+                    }
+                    client.Peer = nil
+                    client.RoomID = ""
+                    hub.mu.Unlock()
+                    continue
 				}
 			}
 

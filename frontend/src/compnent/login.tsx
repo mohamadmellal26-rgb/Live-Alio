@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mail, Lock, User, ArrowRight, ArrowLeft, Video, Briefcase, FileText, CreditCard, ShieldCheck } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, ArrowLeft, Video, Briefcase, FileText, CreditCard, ShieldCheck, Camera } from 'lucide-react';
 import './login.css';
 
 type UserRole = 'user' | 'youtuber' | 'investor';
@@ -9,7 +9,6 @@ interface AuthProps {
   onBackToHome?: () => void;
 }
 
-// مكون أيقونة يوتيوب نقي
 const YoutubeIcon: React.FC<{ size?: number; color?: string; className?: string }> = ({ size = 20, color = "#FF0000", className = "" }) => (
   <svg 
     width={size} 
@@ -30,6 +29,10 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>('user');
   
+  // Profile Picture State
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+
   // Youtuber Specific Fields
   const [youtubeUrl, setYoutubeUrl] = useState('');
 
@@ -44,7 +47,6 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
 
   const API_BASE_URL = 'https://live-alio.onrender.com/api/v1';
 
-  // تنظيف اتصال الـ WebSocket عند التفكيك
   useEffect(() => {
     return () => {
       if (wsRef.current) {
@@ -53,7 +55,22 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
     };
   }, []);
 
-  // Validation Check for Youtube URL
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setError('Image size should not exceed 5MB.');
+        return;
+      }
+      setAvatarFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAvatarPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const validateYoutubeUrl = (url: string) => {
     const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com\/(channel\/|c\/|@)|youtu\.be\/).+/;
     return pattern.test(url);
@@ -68,7 +85,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
     wsRef.current = ws;
 
     ws.onopen = () => console.log('Connected to WebSocket server as:', activeRole);
-    ws.onmessage = (event) => {
+    ws.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
         console.log('Signal received:', data);
@@ -84,7 +101,6 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
     e.preventDefault();
     setError(null);
 
-    // Validation Rules
     if (isSignUp) {
       if (!fullName.trim()) {
         setError('Full Name is required.');
@@ -115,13 +131,16 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
     try {
       let response: Response;
 
-      // إذا كان تسجيل حساب جديد ويوجد ملف مرفق استخدم FormData
-      if (isSignUp && projectProof) {
+      if (isSignUp && (avatarFile || projectProof)) {
         const formData = new FormData();
         formData.append('fullName', fullName);
         formData.append('email', email);
         formData.append('password', password);
         formData.append('role', role);
+
+        if (avatarFile) {
+          formData.append('avatar', avatarFile);
+        }
 
         if (role === 'youtuber') {
           formData.append('youtubeUrl', youtubeUrl);
@@ -129,15 +148,16 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
 
         if (role === 'investor') {
           formData.append('pyCardId', pyCardId);
-          formData.append('projectProof', projectProof);
+          if (projectProof) {
+            formData.append('projectProof', projectProof);
+          }
         }
 
         response = await fetch(endpoint, {
           method: 'POST',
-          body: formData, // لا نضع Content-Type header يدوياً عند استخدام FormData
+          body: formData,
         });
       } else {
-        // إرسال Payload عادي كـ JSON
         const payload: Record<string, any> = isSignUp
           ? { fullName, email, password, role }
           : { email, password };
@@ -160,33 +180,47 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
         });
       }
 
-      const data = await response.json();
+      const responseText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        data = { message: responseText || 'Server returned an invalid response.' };
+      }
 
       if (!response.ok) {
         throw new Error(data.error || data.message || 'Operation failed. Please check your inputs.');
       }
 
-      // حفظ التوكين وبيانات المستخدم
       if (data.token) {
         localStorage.setItem('token', data.token);
       }
-      if (data.user) {
-        localStorage.setItem('user', JSON.stringify(data.user));
+
+      // بناء كائن المستخدم وتأكيد حفظ الصورة بشكل دائم في LocalStorage
+      const userData = data.user || {
+        fullName,
+        email,
+        role,
+        youtubeUrl,
+      };
+
+      if (avatarPreview && !userData.avatar && !userData.avatarUrl) {
+        userData.avatarUrl = avatarPreview;
       }
 
-      // الاتصال بالـ WebSocket بعد النجاح
-      const userRole = data.user?.role || role;
+      localStorage.setItem('user', JSON.stringify(userData));
+
+      const userRole = userData.role || role;
       if (data.token) {
         connectWebSocket(data.token, userRole);
       }
 
-      // التوجيه أو الاستدعاء الترجيعي
       if (onLoginSuccess) {
-        onLoginSuccess(data.token, data.user);
+        onLoginSuccess(data.token, userData);
       } else if (onBackToHome) {
         onBackToHome();
       } else {
-        window.location.href = '/';
+        window.location.href = '/protfile';
       }
 
     } catch (err: any) {
@@ -244,6 +278,42 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
         )}
 
         <form onSubmit={handleSubmit} className="login-form">
+          {/* Avatar Upload (Sign Up Only) */}
+          {isSignUp && (
+            <div className="avatar-upload-wrapper" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <label htmlFor="avatar-input" style={{ cursor: 'pointer', position: 'relative' }}>
+                <div style={{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '50%',
+                  backgroundColor: '#1f2937',
+                  border: '2px dashed #4b5563',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  position: 'relative'
+                }}>
+                  {avatarPreview ? (
+                    <img src={avatarPreview} alt="Avatar Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <Camera size={28} color="#9ca3af" />
+                  )}
+                </div>
+              </label>
+              <input
+                type="file"
+                id="avatar-input"
+                accept="image/*"
+                onChange={handleAvatarChange}
+                style={{ display: 'none' }}
+              />
+              <span style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.4rem' }}>
+                Upload Profile Picture (Optional)
+              </span>
+            </div>
+          )}
+
           {/* Select User Role (Sign Up Only) */}
           {isSignUp && (
             <div className="form-group">
@@ -318,7 +388,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
             <div className="label-row">
               <label htmlFor="password">Password</label>
               {!isSignUp && (
-                <a href="#" className="forgot-link">
+                <a href="#forgot" onClick={(e) => e.preventDefault()} className="forgot-link">
                   Forgot password?
                 </a>
               )}
@@ -364,7 +434,6 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
                 <span>Investor & Project Verification Required</span>
               </div>
 
-              {/* Py Card Verification ID */}
               <div className="form-group">
                 <label htmlFor="pyCardId">Payoneer / Py Merchant Card ID</label>
                 <div className="input-wrapper">
@@ -380,7 +449,6 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
                 </div>
               </div>
 
-              {/* Project Proof File Upload */}
               <div className="form-group">
                 <label htmlFor="projectProof">Project Proof / Business Pitch Deck (PDF)</label>
                 <div className="input-wrapper">
@@ -421,7 +489,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
 
         <p className="login-footer">
           {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-          <a href="#" className="signup-link" onClick={toggleAuthMode}>
+          <a href="#toggle" className="signup-link" onClick={toggleAuthMode}>
             {isSignUp ? 'Sign in' : 'Sign up now'}
           </a>
         </p>
