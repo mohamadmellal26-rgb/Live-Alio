@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,16 +25,23 @@ var jwtSecret = []byte("super_secret_live_aleo_key_2026")
 // =================== Models ===================
 
 type User struct {
-	ID       string `json:"id"`
-	FullName string `json:"fullName"`
-	Email    string `json:"email"`
-	Password string `json:"-"`
+	ID           string `json:"id"`
+	FullName     string `json:"fullName"`
+	Email        string `json:"email"`
+	Password     string `json:"-"`
+	Role         string `json:"role"`         // "user", "youtuber", "investor"
+	YoutubeUrl   string `json:"youtubeUrl,omitempty"`
+	PyCardId     string `json:"pyCardId,omitempty"`
+	ProjectProof string `json:"projectProof,omitempty"` // Path to uploaded proof file
 }
 
 type RegisterRequest struct {
-	FullName string `json:"fullName"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	FullName   string `json:"fullName" form:"fullName"`
+	Email      string `json:"email" form:"email"`
+	Password   string `json:"password" form:"password"`
+	Role       string `json:"role" form:"role"`
+	YoutubeUrl string `json:"youtubeUrl,omitempty" form:"youtubeUrl"`
+	PyCardId   string `json:"pyCardId,omitempty" form:"pyCardId"`
 }
 
 type LoginRequest struct {
@@ -44,7 +54,7 @@ type Client struct {
 	UserID   string          `json:"userId"`
 	FullName string          `json:"fullName"`
 	Conn     *websocket.Conn `json:"-"`
-	Role     string          `json:"role"` // "youtuber" أو "all"
+	Role     string          `json:"role"` // "youtuber", "investor", "user", "all"
 	Peer     *Client         `json:"-"`    // الطرف الآخر المقترن به
 	RoomID   string          `json:"roomId,omitempty"`
 	mu       sync.Mutex
@@ -61,6 +71,7 @@ var userStore = &UserStore{users: make(map[string]*User)}
 
 type Hub struct {
 	youtuberQueue []*Client
+	investorQueue []*Client
 	allQueue      []*Client
 	clients       map[string]*Client
 	mu            sync.Mutex
@@ -69,6 +80,7 @@ type Hub struct {
 func newHub() *Hub {
 	return &Hub{
 		youtuberQueue: make([]*Client, 0),
+		investorQueue: make([]*Client, 0),
 		allQueue:      make([]*Client, 0),
 		clients:       make(map[string]*Client),
 	}
@@ -85,7 +97,8 @@ func (h *Hub) RegisterClient(client *Client) {
 }
 
 func (h *Hub) matchClient(client *Client) {
-	if client.Role == "youtuber" {
+	switch client.Role {
+	case "youtuber":
 		if len(h.youtuberQueue) > 0 {
 			peer := h.youtuberQueue[0]
 			h.youtuberQueue = h.youtuberQueue[1:]
@@ -93,7 +106,17 @@ func (h *Hub) matchClient(client *Client) {
 			return
 		}
 		h.youtuberQueue = append(h.youtuberQueue, client)
-	} else {
+
+	case "investor":
+		if len(h.investorQueue) > 0 {
+			peer := h.investorQueue[0]
+			h.investorQueue = h.investorQueue[1:]
+			h.pairClients(client, peer)
+			return
+		}
+		h.investorQueue = append(h.investorQueue, client)
+
+	default: // "user" or "all"
 		if len(h.allQueue) > 0 {
 			peer := h.allQueue[0]
 			h.allQueue = h.allQueue[1:]
@@ -145,6 +168,7 @@ func (h *Hub) UnregisterClient(client *Client) {
 	delete(h.clients, client.ID)
 
 	h.youtuberQueue = removeClientFromSlice(h.youtuberQueue, client)
+	h.investorQueue = removeClientFromSlice(h.investorQueue, client)
 	h.allQueue = removeClientFromSlice(h.allQueue, client)
 
 	if client.Peer != nil {
@@ -181,6 +205,7 @@ func generateToken(user *User) (string, error) {
 		"userId":   user.ID,
 		"email":    user.Email,
 		"fullName": user.FullName,
+		"role":     user.Role,
 		"exp":      time.Now().Add(time.Hour * 72).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -204,8 +229,12 @@ func parseToken(tokenStr string) (jwt.MapClaims, error) {
 // =================== Main Server ===================
 
 func main() {
+	// إنشاء مجلد الرفوعات للملفات إن لم يكن موجوداً
+	_ = os.MkdirAll("./uploads", os.ModePerm)
+
 	app := fiber.New(fiber.Config{
-		AppName: "Live-Aleo Backend",
+		AppName:   "Live-Aleo Backend",
+		BodyLimit: 10 * 1024 * 1024, // 10MB limit for uploads
 	})
 
 	app.Use(logger.New())
@@ -214,6 +243,9 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
 
+	// إمكانية الوصول إلى الملفات المرفوعة
+	app.Static("/uploads", "./uploads")
+
 	hub := newHub()
 
 	// ---------------- Auth Routes ----------------
@@ -221,8 +253,47 @@ func main() {
 
 	api.Post("/signup", func(c *fiber.Ctx) error {
 		var req RegisterRequest
+
+		// محاولة القراءة من JSON أو Form Body
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		if req.Email == "" || req.Password == "" || req.FullName == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Missing required fields (fullName, email, password)"})
+		}
+
+		if req.Role == "" {
+			req.Role = "user"
+		}
+
+		// التحقق من متطلبات الدور المحدد
+		if req.Role == "youtuber" && req.YoutubeUrl == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "YouTube channel or video URL is required for YouTuber role"})
+		}
+
+		var projectProofPath string
+
+		if req.Role == "investor" {
+			if req.PyCardId == "" {
+				return c.Status(400).JSON(fiber.Map{"error": "Payoneer / Py Merchant Card ID is required for Investor role"})
+			}
+
+			// معالجة رفع الملف (Project Proof)
+			file, err := c.FormFile("projectProof")
+			if err != nil {
+				return c.Status(400).JSON(fiber.Map{"error": "Project proof file (PDF/Doc) is required for Investors"})
+			}
+
+			ext := strings.ToLower(filepath.Ext(file.Filename))
+			if ext != ".pdf" && ext != ".doc" && ext != ".docx" {
+				return c.Status(400).JSON(fiber.Map{"error": "Only PDF, DOC, and DOCX files are allowed"})
+			}
+
+			projectProofPath = fmt.Sprintf("./uploads/%s_%s", uuid.New().String(), file.Filename)
+			if err := c.SaveFile(file, projectProofPath); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
+			}
 		}
 
 		userStore.mu.Lock()
@@ -238,10 +309,14 @@ func main() {
 		}
 
 		newUser := &User{
-			ID:       uuid.New().String(),
-			FullName: req.FullName,
-			Email:    req.Email,
-			Password: string(hashedPassword),
+			ID:           uuid.New().String(),
+			FullName:     req.FullName,
+			Email:        req.Email,
+			Password:     string(hashedPassword),
+			Role:         req.Role,
+			YoutubeUrl:   req.YoutubeUrl,
+			PyCardId:     req.PyCardId,
+			ProjectProof: projectProofPath,
 		}
 
 		userStore.users[req.Email] = newUser
@@ -291,6 +366,7 @@ func main() {
 				if err == nil {
 					c.Locals("userId", claims["userId"])
 					c.Locals("fullName", claims["fullName"])
+					c.Locals("role", claims["role"])
 					return c.Next()
 				}
 			}
@@ -299,6 +375,7 @@ func main() {
 			guestID := uuid.New().String()
 			c.Locals("userId", guestID)
 			c.Locals("fullName", "Guest_"+guestID[:5])
+			c.Locals("role", "user")
 			return c.Next()
 		}
 		return fiber.ErrUpgradeRequired
@@ -306,8 +383,14 @@ func main() {
 
 	// ---------------- WebSocket Connection Point ----------------
 	app.Get("/ws/live", websocket.New(func(c *websocket.Conn) {
-		role := c.Query("role", "all")
-		if role != "youtuber" && role != "all" {
+		roleQuery := c.Query("role")
+		role, _ := c.Locals("role").(string)
+
+		if roleQuery != "" {
+			role = roleQuery
+		}
+
+		if role != "youtuber" && role != "investor" && role != "user" {
 			role = "all"
 		}
 

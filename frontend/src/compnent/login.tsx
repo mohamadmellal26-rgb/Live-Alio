@@ -1,54 +1,186 @@
-import React, { useState } from 'react';
-import { Mail, Lock, User, ArrowRight, ArrowLeft, Video } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Mail, Lock, User, ArrowRight, ArrowLeft, Video, Briefcase, FileText, CreditCard, ShieldCheck } from 'lucide-react';
 import './login.css';
+
+type UserRole = 'user' | 'youtuber' | 'investor';
 
 interface AuthProps {
   onLoginSuccess?: (token: string, user: any) => void;
   onBackToHome?: () => void;
 }
 
+// مكون أيقونة يوتيوب نقي
+const YoutubeIcon: React.FC<{ size?: number; color?: string; className?: string }> = ({ size = 20, color = "#FF0000", className = "" }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill={color} 
+    className={className} 
+    style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+  >
+    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+  </svg>
+);
+
 export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState<UserRole>('user');
+  
+  // Youtuber Specific Fields
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+
+  // Investor Specific Fields
+  const [pyCardId, setPyCardId] = useState('');
+  const [projectProof, setProjectProof] = useState<File | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // تم تحديث رابط الـ API ليوجه إلى سيرفر Render بدلاً من localhost
+  const wsRef = useRef<WebSocket | null>(null);
+
   const API_BASE_URL = 'https://live-alio.onrender.com/api/v1';
+
+  // تنظيف اتصال الـ WebSocket عند التفكيك
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
+
+  // Validation Check for Youtube URL
+  const validateYoutubeUrl = (url: string) => {
+    const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com\/(channel\/|c\/|@)|youtu\.be\/).+/;
+    return pattern.test(url);
+  };
+
+  const connectWebSocket = (token: string, activeRole: string) => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    const ws = new WebSocket(`wss://live-alio.onrender.com/ws/live?role=${activeRole}&token=${token}`);
+    wsRef.current = ws;
+
+    ws.onopen = () => console.log('Connected to WebSocket server as:', activeRole);
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('Signal received:', data);
+      } catch (e) {
+        console.log('Raw message received:', event.data);
+      }
+    };
+    ws.onerror = (err) => console.error('WebSocket Error:', err);
+    ws.onclose = () => console.log('WebSocket connection closed');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    // Validation Rules
+    if (isSignUp) {
+      if (!fullName.trim()) {
+        setError('Full Name is required.');
+        return;
+      }
+
+      if (role === 'youtuber' && (!youtubeUrl || !validateYoutubeUrl(youtubeUrl))) {
+        setError('Please provide a valid YouTube channel or video URL.');
+        return;
+      }
+
+      if (role === 'investor') {
+        if (!pyCardId.trim()) {
+          setError('Py / Payment Card verification ID is required for Investors.');
+          return;
+        }
+        if (!projectProof) {
+          setError('Please upload proof of project ownership or business documentation.');
+          return;
+        }
+      }
+    }
+
     setLoading(true);
 
     const endpoint = isSignUp ? `${API_BASE_URL}/signup` : `${API_BASE_URL}/login`;
-    const payload = isSignUp ? { fullName, email, password } : { email, password };
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+      let response: Response;
+
+      // إذا كان تسجيل حساب جديد ويوجد ملف مرفق استخدم FormData
+      if (isSignUp && projectProof) {
+        const formData = new FormData();
+        formData.append('fullName', fullName);
+        formData.append('email', email);
+        formData.append('password', password);
+        formData.append('role', role);
+
+        if (role === 'youtuber') {
+          formData.append('youtubeUrl', youtubeUrl);
+        }
+
+        if (role === 'investor') {
+          formData.append('pyCardId', pyCardId);
+          formData.append('projectProof', projectProof);
+        }
+
+        response = await fetch(endpoint, {
+          method: 'POST',
+          body: formData, // لا نضع Content-Type header يدوياً عند استخدام FormData
+        });
+      } else {
+        // إرسال Payload عادي كـ JSON
+        const payload: Record<string, any> = isSignUp
+          ? { fullName, email, password, role }
+          : { email, password };
+
+        if (isSignUp && role === 'youtuber') {
+          payload.youtubeUrl = youtubeUrl;
+        }
+
+        if (isSignUp && role === 'investor') {
+          payload.pyCardId = pyCardId;
+        }
+
+        response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload),
+        });
+      }
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'حدث خطأ أثناء العملية');
+        throw new Error(data.error || data.message || 'Operation failed. Please check your inputs.');
       }
 
-      // حفظ الـ JWT Token وبيانات المستخدم
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
+      // حفظ التوكين وبيانات المستخدم
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
+      if (data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user));
+      }
 
-      // الاتصال بالـ WebSocket باستخدام رابط Render
-      connectWebSocket(data.token);
+      // الاتصال بالـ WebSocket بعد النجاح
+      const userRole = data.user?.role || role;
+      if (data.token) {
+        connectWebSocket(data.token, userRole);
+      }
 
-      // الانتقال مباشرة إلى الصفحة الرئيسية (/)
+      // التوجيه أو الاستدعاء الترجيعي
       if (onLoginSuccess) {
         onLoginSuccess(data.token, data.user);
       } else if (onBackToHome) {
@@ -58,32 +190,10 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
       }
 
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'An unexpected error occurred.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const connectWebSocket = (token: string) => {
-    // تحديث رابط الـ WebSocket ليتوافق مع سيرفر Render (wss)
-    const ws = new WebSocket(`wss://live-alio.onrender.com/ws/live?role=youtuber&token=${token}`);
-
-    ws.onopen = () => {
-      console.log('Connected to WebSocket server');
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('Signal received:', data);
-    };
-
-    ws.onerror = (err) => {
-      console.error('WebSocket Error:', err);
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket connection closed');
-    };
   };
 
   const toggleAuthMode = (e: React.MouseEvent) => {
@@ -103,31 +213,15 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
   return (
     <div className="login-container" dir="ltr">
       <div className="login-card">
-        {/* Back to Home Button */}
         <button 
           type="button" 
           onClick={handleBackToHome}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: 'transparent',
-            border: 'none',
-            color: '#9ca3af',
-            cursor: 'pointer',
-            fontSize: '14px',
-            marginBottom: '16px',
-            padding: 0,
-            transition: 'color 0.2s ease'
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
-          onMouseLeave={(e) => (e.currentTarget.style.color = '#9ca3af')}
+          className="btn-back-home"
         >
           <ArrowLeft size={18} />
           <span>Back to Home</span>
         </button>
 
-        {/* Header */}
         <div className="login-header">
           <div className="login-logo">
             <Video size={28} className="logo-icon" />
@@ -138,30 +232,54 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
           </h1>
           <p className="login-subtitle">
             {isSignUp
-              ? 'Join today to connect and match with creators worldwide'
+              ? 'Choose your identity and join the global creator network'
               : 'Sign in to start matching with creators worldwide'}
           </p>
         </div>
 
-        {/* Display Error Message */}
         {error && (
-          <div style={{
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.4)',
-            color: '#ef4444',
-            padding: '10px 14px',
-            borderRadius: '8px',
-            fontSize: '13px',
-            marginBottom: '16px',
-            textAlign: 'center'
-          }}>
+          <div className="error-alert">
             {error}
           </div>
         )}
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="login-form">
-          {/* Full Name Input (Sign Up Only) */}
+          {/* Select User Role (Sign Up Only) */}
+          {isSignUp && (
+            <div className="form-group">
+              <label>Select Role</label>
+              <div className="role-selector-grid">
+                <button
+                  type="button"
+                  onClick={() => setRole('user')}
+                  className={`btn-role ${role === 'user' ? 'active-user' : ''}`}
+                >
+                  <User size={20} />
+                  <span>Standard</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRole('youtuber')}
+                  className={`btn-role ${role === 'youtuber' ? 'active-youtuber' : ''}`}
+                >
+                  <YoutubeIcon size={20} color="#FF0000" />
+                  <span>Youtuber</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRole('investor')}
+                  className={`btn-role ${role === 'investor' ? 'active-investor' : ''}`}
+                >
+                  <Briefcase size={20} color="#10b981" />
+                  <span>Investor</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Full Name Input */}
           {isSignUp && (
             <div className="form-group">
               <label htmlFor="fullName">Full Name</label>
@@ -218,19 +336,77 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
             </div>
           </div>
 
-          {/* Submit Button */}
+          {/* YOUTUBER Dynamic Requirement */}
+          {isSignUp && role === 'youtuber' && (
+            <div className="form-group youtuber-field-wrapper">
+              <label htmlFor="youtubeUrl">YouTube Channel / Video Link</label>
+              <div className="input-wrapper">
+                <span className="input-icon">
+                  <YoutubeIcon size={18} color="#FF0000" />
+                </span>
+                <input
+                  type="url"
+                  id="youtubeUrl"
+                  placeholder="https://youtube.com/@channelname"
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+          )}
+
+          {/* INVESTOR Dynamic Verification Requirements */}
+          {isSignUp && role === 'investor' && (
+            <div className="investor-verification-card">
+              <div className="investor-card-header">
+                <ShieldCheck size={16} />
+                <span>Investor & Project Verification Required</span>
+              </div>
+
+              {/* Py Card Verification ID */}
+              <div className="form-group">
+                <label htmlFor="pyCardId">Payoneer / Py Merchant Card ID</label>
+                <div className="input-wrapper">
+                  <CreditCard size={18} className="input-icon" />
+                  <input
+                    type="text"
+                    id="pyCardId"
+                    placeholder="PY-XXXX-XXXX-XXXX"
+                    value={pyCardId}
+                    onChange={(e) => setPyCardId(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Project Proof File Upload */}
+              <div className="form-group">
+                <label htmlFor="projectProof">Project Proof / Business Pitch Deck (PDF)</label>
+                <div className="input-wrapper">
+                  <FileText size={18} className="input-icon" />
+                  <input
+                    type="file"
+                    id="projectProof"
+                    accept=".pdf,.doc,.docx"
+                    onChange={(e) => setProjectProof(e.target.files?.[0] || null)}
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           <button type="submit" className="btn-login" disabled={loading}>
-            <span>{loading ? 'Processing...' : isSignUp ? 'Create Account' : 'Sign In'}</span>
+            <span>{loading ? 'Processing...' : isSignUp ? `Create ${role.toUpperCase()} Account` : 'Sign In'}</span>
             <ArrowRight size={18} />
           </button>
         </form>
 
-        {/* Divider */}
         <div className="login-divider">
           <span>Or continue with</span>
         </div>
 
-        {/* Google Auth Button */}
         <div className="social-buttons">
           <button type="button" className="btn-social-google">
             <svg className="social-icon" viewBox="0 0 24 24" width="20" height="20">
@@ -243,7 +419,6 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
           </button>
         </div>
 
-        {/* Footer Toggle */}
         <p className="login-footer">
           {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
           <a href="#" className="signup-link" onClick={toggleAuthMode}>

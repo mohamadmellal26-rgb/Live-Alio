@@ -10,6 +10,11 @@
   --text-secondary: #a1a1aa;
   --border-color: #27272a;
   --border-subtle: rgba(255, 255, 255, 0.15);
+  
+  /* Role & Alert Accents */
+  --role-user: #6366f1;
+  --role-youtuber: #ef4444;
+  --role-investor: #10b981;
 }
 
 .login-container {
@@ -24,18 +29,38 @@
 
 .login-card {
   width: 100%;
-  max-width: 420px;
+  max-width: 440px;
   background-color: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 16px;
   padding: 36px 32px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+  box-sizing: border-box;
+}
+
+/* Back Button */
+.btn-back-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  margin-bottom: 16px;
+  padding: 0;
+  transition: color 0.2s ease;
+}
+
+.btn-back-home:hover {
+  color: var(--text-primary);
 }
 
 /* Header Section */
 .login-header {
   text-align: center;
-  margin-bottom: 28px;
+  margin-bottom: 24px;
 }
 
 .login-logo {
@@ -67,6 +92,19 @@
   font-size: 14px;
   color: var(--text-secondary);
   margin: 0;
+  line-height: 1.4;
+}
+
+/* Error Alert Box */
+.error-alert {
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 18px;
+  text-align: center;
 }
 
 /* Form Controls */
@@ -106,6 +144,75 @@
   opacity: 0.8;
 }
 
+/* Role Selector Buttons Grid */
+.role-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.btn-role {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-role:hover {
+  border-color: var(--border-subtle);
+}
+
+.btn-role.active-user {
+  border: 2px solid var(--role-user);
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.btn-role.active-youtuber {
+  border: 2px solid var(--role-youtuber);
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.btn-role.active-investor {
+  border: 2px solid var(--role-investor);
+  background: rgba(16, 185, 129, 0.15);
+}
+
+/* Specific Role Field Highlights */
+.youtuber-field-wrapper {
+  border-left: 3px solid var(--role-youtuber);
+  padding-left: 10px;
+}
+
+/* Investor Verification Container */
+.investor-verification-card {
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 10px;
+  padding: 14px;
+  background-color: rgba(16, 185, 129, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.investor-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--role-investor);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Input Styles */
 .input-wrapper {
   position: relative;
   display: flex;
@@ -116,6 +223,10 @@
   position: absolute;
   left: 14px;
   color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .input-wrapper input {
@@ -128,6 +239,7 @@
   font-size: 14px;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
 }
 
 .input-wrapper input:focus {
@@ -135,7 +247,23 @@
   box-shadow: 0 0 0 2px rgba(255, 34, 255, 0.2);
 }
 
-/* Buttons */
+.input-wrapper input[type="file"] {
+  padding: 8px 12px 8px 42px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.input-wrapper input[type="file"]::-webkit-file-upload-button {
+  background: var(--border-color);
+  color: var(--text-primary);
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-right: 8px;
+  cursor: pointer;
+}
+
+/* Primary Action Button */
 .btn-login {
   display: flex;
   align-items: center;
@@ -161,6 +289,12 @@
 
 .btn-login:active {
   transform: scale(0.98);
+}
+
+.btn-login:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 /* Divider */
@@ -189,7 +323,7 @@
   font-weight: 500;
 }
 
-/* Social Google Button */
+/* Social Buttons */
 .social-buttons {
   width: 100%;
 }
@@ -225,16 +359,6 @@
   color: var(--text-secondary);
 }
 
-.signup-link {
-  color: var(--accent-pink);
-  text-decoration: none;
-  font-weight: 600;
-  margin-left: 4px;
-}
-
-.signup-link:hover {
-  text-decoration: underline;
-}
 .signup-link {
   color: var(--accent-pink);
   text-decoration: none;
