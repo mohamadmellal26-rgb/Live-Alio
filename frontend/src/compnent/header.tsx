@@ -216,7 +216,9 @@ export const Header: React.FC = () => {
         <span className="banner-text">{currentEvent.title}</span>
         <span className="banner-highlight">— {currentEvent.highlight}</span>
 
-        <button className="btn-participate">{currentEvent.actionText}</button>
+        <Link to="/dashboard" className="btn-participate" style={{ textDecoration: 'none' }}>
+          {currentEvent.actionText}
+        </Link>
       </div>
 
       {/* 2. Main Navigation Bar */}
@@ -243,7 +245,7 @@ export const Header: React.FC = () => {
                   <ChevronDown className="chevron-icon" />
                 </button>
                 <div className="dropdown-menu w-64">
-                  <a href="#" className="dropdown-link">
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(234, 179, 8, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Zap style={{ color: '#eab308' }} size={18} />
                     </div>
@@ -251,8 +253,8 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Random Stream</div>
                       <div className="dropdown-desc">Instant 1-on-1 live matching</div>
                     </div>
-                  </a>
-                  <a href="#" className="dropdown-link">
+                  </Link>
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(59, 130, 246, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Target style={{ color: '#3b82f6' }} size={18} />
                     </div>
@@ -260,7 +262,7 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Targeted Pitch</div>
                       <div className="dropdown-desc">Match by country & industry</div>
                     </div>
-                  </a>
+                  </Link>
                 </div>
               </div>
 
@@ -278,7 +280,7 @@ export const Header: React.FC = () => {
                   <ChevronDown className="chevron-icon" />
                 </button>
                 <div className="dropdown-menu w-64">
-                  <a href="#" className="dropdown-link">
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Briefcase style={{ color: '#22c55e' }} size={18} />
                     </div>
@@ -286,8 +288,8 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Venture Capitalists</div>
                       <div className="dropdown-desc">Connect with verified VC firms</div>
                     </div>
-                  </a>
-                  <a href="#" className="dropdown-link">
+                  </Link>
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(168, 85, 247, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Crown style={{ color: '#a855f7' }} size={18} />
                     </div>
@@ -295,7 +297,7 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Angel Investors</div>
                       <div className="dropdown-desc">High-net-worth individual backers</div>
                     </div>
-                  </a>
+                  </Link>
                 </div>
               </div>
 
@@ -313,7 +315,7 @@ export const Header: React.FC = () => {
                   <ChevronDown className="chevron-icon" />
                 </button>
                 <div className="dropdown-menu w-64">
-                  <a href="#" className="dropdown-link">
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(6, 182, 212, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Globe style={{ color: '#06b6d4' }} size={18} />
                     </div>
@@ -321,8 +323,8 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Country Selection</div>
                       <div className="dropdown-desc">Filter streams by region</div>
                     </div>
-                  </a>
-                  <a href="#" className="dropdown-link">
+                  </Link>
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(249, 115, 22, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Sliders style={{ color: '#f97316' }} size={18} />
                     </div>
@@ -330,7 +332,7 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Role Preferences</div>
                       <div className="dropdown-desc">Founders, mentors, or backers</div>
                     </div>
-                  </a>
+                  </Link>
                 </div>
               </div>
 
@@ -348,7 +350,7 @@ export const Header: React.FC = () => {
                   <ChevronDown className="chevron-icon" />
                 </button>
                 <div className="dropdown-menu w-64">
-                  <a href="#" className="dropdown-link">
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Video style={{ color: '#ef4444' }} size={18} />
                     </div>
@@ -356,8 +358,8 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Public Arena</div>
                       <div className="dropdown-desc">Live open pitch broadcasts</div>
                     </div>
-                  </a>
-                  <a href="#" className="dropdown-link">
+                  </Link>
+                  <Link to="/dashboard" className="dropdown-link">
                     <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <TrendingUp style={{ color: '#10b981' }} size={18} />
                     </div>
@@ -365,14 +367,14 @@ export const Header: React.FC = () => {
                       <div className="dropdown-title">Private Deal Rooms</div>
                       <div className="dropdown-desc">Encrypted 1-on-1 pitch sessions</div>
                     </div>
-                  </a>
+                  </Link>
                 </div>
               </div>
 
-              <a href="#" className="nav-link-badge">
+              <Link to="/dashboard" className="nav-link-badge">
                 Precision Pass
                 <span className="badge-save-purple">Pay Per Match</span>
-              </a>
+              </Link>
             </div>
           </div>
 
@@ -414,7 +416,10 @@ export const Header: React.FC = () => {
               )}
             </div>
             
-            <button className="btn-start-create">Start Live Match</button>
+            {/* التعديل الأساسي هنا: تم تحويل الزر إلى Link يوجه لـ /dashboard */}
+            <Link to="/dashboard" className="btn-start-create" style={{ textDecoration: 'none' }}>
+              Start Live Match
+            </Link>
             
             {user ? (
               <div className="user-profile-menu-container" ref={userMenuRef} style={{ position: 'relative' }}>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './Dashboard.css';
 
 interface MatchFilter {
@@ -7,18 +7,6 @@ interface MatchFilter {
   genderFilter: 'Both' | 'Male' | 'Female';
 }
 
-interface RecentMatch {
-  id: string;
-  name: string;
-  role: string;
-  avatar: string;
-  matchedAt: string;
-  duration: string;
-  ageGroup: string;
-  status: 'Online' | 'Offline';
-}
-
-// إعداد سيرفرات STUN المجانية من Google لتأمين اتصال WebRTC Peer-to-Peer
 const rtcConfiguration: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -31,10 +19,25 @@ export const Dashboard: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [isConnectedToPeer, setIsConnectedToPeer] = useState(false);
   const [peerName, setPeerName] = useState<string>('');
-
-  // إعدادات المايك والكاميرا
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoStopped, setIsVideoStopped] = useState(false);
+
+  // عناصر الفيديو
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // مراجع الاتصالات والبث
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // طابور لتخزين ICE Candidates قبل إعداد Remote Description
+  const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
+
+  // بيانات المستخدم
+  const [user] = useState<any>(() => {
+    const savedUser = localStorage.getItem('user');
+    return savedUser ? JSON.parse(savedUser) : { fullName: 'Mohamad', role: 'user' };
+  });
 
   // الفلاتر
   const [filters, setFilters] = useState<MatchFilter>({
@@ -43,35 +46,30 @@ export const Dashboard: React.FC = () => {
     genderFilter: 'Both',
   });
 
-  // عناصر الفيديو المباشر
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const isRegularUser = !user?.role || user?.role === 'user' || user?.role === 'regular';
 
-  // إشارات التوصيل WebRTC و WebSocket
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  useEffect(() => {
+    if (isRegularUser && filters.targetType !== 'all') {
+      setFilters((prev) => ({ ...prev, targetType: 'all' }));
+    }
+  }, [user, isRegularUser, filters.targetType]);
 
-  // بيانات حساب المستخدم الحالية
-  const [user, setUser] = useState<any>(() => {
-    const savedUser = localStorage.getItem('user');
-    return savedUser ? JSON.parse(savedUser) : { fullName: 'Mohamad', role: 'user' };
-  });
-
-  // 1. تهيئة الكاميرا المحلية عند تحميل الصفحة
+  // تشغيل الكاميرا المحلية عند التحميل
   useEffect(() => {
     startLocalCamera();
 
     return () => {
       stopLocalCamera();
-      closePeerConnection();
-      closeWebSocket();
+      cleanupConnection();
     };
   }, []);
 
   const startLocalCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+        audio: true 
+      });
       localStreamRef.current = stream;
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
@@ -85,13 +83,164 @@ export const Dashboard: React.FC = () => {
   const stopLocalCamera = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
   };
 
-  // 2. التحكم في بداية المطابقة واقتران WebRTC
+  // إرسال الإشارات عبر WebSocket
+  const sendSignal = useCallback((payload: any) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(payload));
+    }
+  }, []);
+
+  // إغلاق الاتصالات وتنظيف الذاكرة
+  const cleanupConnection = useCallback(() => {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.ontrack = null;
+      peerConnectionRef.current.onicecandidate = null;
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+
+    if (wsRef.current) {
+      wsRef.current.onopen = null;
+      wsRef.current.onmessage = null;
+      wsRef.current.onerror = null;
+      wsRef.current.onclose = null;
+      if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+        wsRef.current.close();
+      }
+      wsRef.current = null;
+    }
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+
+    iceCandidatesQueue.current = [];
+  }, []);
+
+  // تفريغ ICE Candidates من الطابور بعد إعداد السيرفر البعيد
+  const processQueuedCandidates = async () => {
+    if (!peerConnectionRef.current) return;
+    while (iceCandidatesQueue.current.length > 0) {
+      const candidate = iceCandidatesQueue.current.shift();
+      if (candidate) {
+        try {
+          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.error('Error adding queued ICE Candidate:', e);
+        }
+      }
+    }
+  };
+
+  // إنشاء PeerConnection
+  const createPeerConnection = useCallback(() => {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+    }
+
+    const pc = new RTCPeerConnection(rtcConfiguration);
+    peerConnectionRef.current = pc;
+
+    // إضافة المسارات المحلية (المرئية والصوتية)
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        pc.addTrack(track, localStreamRef.current!);
+      });
+    }
+
+    // استلام المسارات من الطرف الآخر
+    pc.ontrack = (event) => {
+      if (remoteVideoRef.current && event.streams[0]) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
+    };
+
+    // إرسال ICE Candidate المحلي للطرف الآخر
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        sendSignal({ type: 'ice-candidate', candidate: event.candidate });
+      }
+    };
+
+    return pc;
+  }, [sendSignal]);
+
+  // معالجة إشارات الـ WebRTC والـ WebSocket
+  const handleSignalingMessage = useCallback(async (data: any) => {
+    switch (data.type) {
+      case 'match_found':
+        console.log('Match found! Initiator:', data.initiator);
+        setIsSearching(false);
+        setIsConnectedToPeer(true);
+        setPeerName(data.peerName || 'Partner');
+
+        const pc = createPeerConnection();
+
+        if (data.initiator) {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            sendSignal({ type: 'offer', offer });
+          } catch (e) {
+            console.error('Error creating offer:', e);
+          }
+        }
+        break;
+
+      case 'offer': {
+        let currentPc = peerConnectionRef.current || createPeerConnection();
+        await currentPc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await processQueuedCandidates();
+
+        const answer = await currentPc.createAnswer();
+        await currentPc.setLocalDescription(answer);
+        sendSignal({ type: 'answer', answer });
+        break;
+      }
+
+      case 'answer': {
+        if (peerConnectionRef.current) {
+          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+          await processQueuedCandidates();
+        }
+        break;
+      }
+
+      case 'ice-candidate': {
+        if (data.candidate) {
+          if (peerConnectionRef.current && peerConnectionRef.current.remoteDescription) {
+            try {
+              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } catch (e) {
+              console.error('Error adding ICE Candidate directly:', e);
+            }
+          } else {
+            // تخزين الـ candidate مؤقتاً في الطابور لحين إعداد الـ Remote Description
+            iceCandidatesQueue.current.push(data.candidate);
+          }
+        }
+        break;
+      }
+
+      case 'peer_disconnected':
+        cleanupConnection();
+        setIsConnectedToPeer(false);
+        setPeerName('');
+        alert(data.message || 'Partner disconnected');
+        break;
+
+      default:
+        break;
+    }
+  }, [createPeerConnection, sendSignal, cleanupConnection]);
+
+  // بدء البحث والمطابقة
   const handleStartMatching = () => {
-    closePeerConnection();
-    closeWebSocket();
+    cleanupConnection();
 
     setIsSearching(true);
     setIsConnectedToPeer(false);
@@ -100,7 +249,6 @@ export const Dashboard: React.FC = () => {
     const token = localStorage.getItem('token') || '';
     const activeRole = filters.targetType;
 
-    // فتح اتصال WebSocket مع Go Backend
     const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${activeRole}&token=${token}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -109,7 +257,7 @@ export const Dashboard: React.FC = () => {
       console.log('Connected to Signaling WebSocket Server');
     };
 
-    ws.onmessage = async (event) => {
+    ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         handleSignalingMessage(data);
@@ -128,119 +276,13 @@ export const Dashboard: React.FC = () => {
     };
   };
 
-  const handleCancelMatching = () => {
-    closeWebSocket();
-    closePeerConnection();
+  const handleStopMatch = () => {
+    cleanupConnection();
     setIsSearching(false);
     setIsConnectedToPeer(false);
+    setPeerName('');
   };
 
-  // 3. معالجة إشارات WebRTC بين الطرفين (Offer / Answer / ICE Candidates)
-  const handleSignalingMessage = async (data: any) => {
-    switch (data.type) {
-      case 'match_found':
-        console.log('Match found! Initiator:', data.initiator);
-        setIsSearching(false);
-        setIsConnectedToPeer(true);
-        setPeerName(data.peerName || 'Partner');
-
-        createPeerConnection();
-
-        if (data.initiator) {
-          // الطرف المبادئ يتكفل بإنشاء Offer
-          try {
-            const offer = await peerConnectionRef.current?.createOffer();
-            await peerConnectionRef.current?.setLocalDescription(offer);
-            sendSignal({ type: 'offer', offer });
-          } catch (e) {
-            console.error('Error creating offer:', e);
-          }
-        }
-        break;
-
-      case 'offer':
-        if (!peerConnectionRef.current) createPeerConnection();
-        await peerConnectionRef.current?.setRemoteDescription(new RTCSessionDescription(data.offer));
-        
-        const answer = await peerConnectionRef.current?.createAnswer();
-        await peerConnectionRef.current?.setLocalDescription(answer);
-        sendSignal({ type: 'answer', answer });
-        break;
-
-      case 'answer':
-        await peerConnectionRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
-        break;
-
-      case 'ice-candidate':
-        if (data.candidate && peerConnectionRef.current) {
-          try {
-            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } catch (e) {
-            console.error('Error adding ICE Candidate:', e);
-          }
-        }
-        break;
-
-      case 'peer_disconnected':
-        alert(data.message || 'Partner disconnected');
-        closePeerConnection();
-        setIsConnectedToPeer(false);
-        setPeerName('');
-        break;
-    }
-  };
-
-  const sendSignal = (payload: any) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(payload));
-    }
-  };
-
-  // 4. إنشاء وتجهيز اتصال RTCPeerConnection
-  const createPeerConnection = () => {
-    const pc = new RTCPeerConnection(rtcConfiguration);
-    peerConnectionRef.current = pc;
-
-    // إضافة مسارات الصوت والفيديو المحلية للاتصال
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current!);
-      });
-    }
-
-    // استقبال مسارات البث القادمة من الطرف الآخر
-    pc.ontrack = (event) => {
-      if (remoteVideoRef.current && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-      }
-    };
-
-    // إرسال ICE Candidates للطرف الآخر
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        sendSignal({ type: 'ice-candidate', candidate: event.candidate });
-      }
-    };
-  };
-
-  const closePeerConnection = () => {
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
-  };
-
-  const closeWebSocket = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-  };
-
-  // 5. مفاتيح التحكم بالصوت والكاميرا
   const toggleMute = () => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
@@ -251,25 +293,10 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const toggleVideo = () => {
-    if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoStopped(!videoTrack.enabled);
-      }
-    }
-  };
-
   return (
     <div className="dashboard-layout">
       {/* Sidebar Navigation */}
       <aside className="dashboard-sidebar">
-        <div className="sidebar-header">
-          <span className="logo-brand">Live-Alio</span>
-          <span className="badge-pro">1v1 CAM</span>
-        </div>
-
         <button 
           className={`btn-start-create btn-new-project ${isSearching ? 'searching-pulse' : ''}`}
           onClick={handleStartMatching}
@@ -285,6 +312,7 @@ export const Dashboard: React.FC = () => {
           >
             Live 1v1 Room
           </button>
+
           <button
             className={`sidebar-nav-item ${activeTab === 'history' ? 'active' : ''}`}
             onClick={() => setActiveTab('history')}
@@ -299,12 +327,22 @@ export const Dashboard: React.FC = () => {
             <select 
               className="filter-select"
               value={filters.targetType}
+              disabled={isRegularUser}
               onChange={(e) => setFilters({ ...filters, targetType: e.target.value as any })}
             >
               <option value="all">All Users</option>
-              <option value="youtuber">Youtubers Only</option>
-              <option value="investor">Investors Only</option>
+              {!isRegularUser && (
+                <>
+                  <option value="youtuber">Youtubers Only</option>
+                  <option value="investor">Investors Only</option>
+                </>
+              )}
             </select>
+            {isRegularUser && (
+              <small style={{ color: '#888', fontSize: '11px', marginTop: '4px', display: 'block' }}>
+                قم بترقية حسابك لتصفية الفئات (Youtubers / Investors)
+              </small>
+            )}
           </div>
         </nav>
 
@@ -334,10 +372,8 @@ export const Dashboard: React.FC = () => {
         </header>
 
         <div className="dashboard-content">
-          {/* 1v1 Dual Camera Studio Canvas */}
           <div className="cam-studio-wrapper">
-            
-            {/* Local Video Box (User) */}
+            {/* Local Video Box */}
             <div className="cam-box local-cam">
               <span className="cam-label">YOU ({user.fullName || 'Mohamad'})</span>
               <video 
@@ -347,14 +383,9 @@ export const Dashboard: React.FC = () => {
                 muted 
                 style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
               />
-              {isVideoStopped && (
-                <div className="cam-placeholder" style={{ position: 'absolute', inset: 0, background: '#111' }}>
-                  <p>Camera Paused</p>
-                </div>
-              )}
             </div>
 
-            {/* Remote Video Box (Matched Partner) */}
+            {/* Remote Video Box */}
             <div className={`cam-box remote-cam ${isSearching ? 'searching' : ''}`}>
               <span className="cam-label">
                 {isSearching 
@@ -381,7 +412,7 @@ export const Dashboard: React.FC = () => {
                   <div className="search-loader">
                     <div className="spinner"></div>
                     <p>Finding a match ({filters.targetType})...</p>
-                    <button className="btn-cancel" onClick={handleCancelMatching}>Cancel</button>
+                    <button className="btn-cancel" onClick={handleStopMatch}>Cancel</button>
                   </div>
                 ) : (
                   <div className="cam-placeholder">
@@ -398,9 +429,17 @@ export const Dashboard: React.FC = () => {
             <button className={`btn-control btn-mic ${isMuted ? 'active-off' : ''}`} onClick={toggleMute}>
               {isMuted ? 'Unmute' : 'Mute'}
             </button>
-            <button className={`btn-control btn-video ${isVideoStopped ? 'active-off' : ''}`} onClick={toggleVideo}>
-              {isVideoStopped ? 'Start Video' : 'Stop Video'}
-            </button>
+            
+            {(isConnectedToPeer || isSearching) && (
+              <button 
+                className="btn-control" 
+                onClick={handleStopMatch}
+                style={{ backgroundColor: '#ef4444', color: '#fff', border: 'none' }}
+              >
+                🛑 Stop Session
+              </button>
+            )}
+
             <button className="btn-start-create btn-next" onClick={handleStartMatching}>
               Next Match ➔
             </button>

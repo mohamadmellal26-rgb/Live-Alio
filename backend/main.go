@@ -29,7 +29,7 @@ type User struct {
 	FullName     string `json:"fullName"`
 	Email        string `json:"email"`
 	Password     string `json:"-"`
-	Role         string `json:"role"`         // "user", "youtuber", "investor"
+	Role         string `json:"role"` // "user", "youtuber", "investor"
 	YoutubeUrl   string `json:"youtubeUrl,omitempty"`
 	PyCardId     string `json:"pyCardId,omitempty"`
 	ProjectProof string `json:"projectProof,omitempty"` // Path to uploaded proof file
@@ -50,14 +50,15 @@ type LoginRequest struct {
 }
 
 type Client struct {
-	ID       string          `json:"id"`
-	UserID   string          `json:"userId"`
-	FullName string          `json:"fullName"`
-	Conn     *websocket.Conn `json:"-"`
-	Role     string          `json:"role"` // "youtuber", "investor", "user", "all"
-	Peer     *Client         `json:"-"`    // الطرف الآخر المقترن به
-	RoomID   string          `json:"roomId,omitempty"`
-	mu       sync.Mutex
+	ID         string          `json:"id"`
+	UserID     string          `json:"userId"`
+	FullName   string          `json:"fullName"`
+	Conn       *websocket.Conn `json:"-"`
+	UserRole   string          `json:"userRole"`   // "user", "youtuber", "investor" (من التوكن الأصلي)
+	TargetFilter string        `json:"targetFilter"` // "all", "youtuber", "investor" (الفلتر المختار)
+	Peer       *Client         `json:"-"`          // الطرف الآخر المقترن به
+	RoomID     string          `json:"roomId,omitempty"`
+	mu         sync.Mutex
 }
 
 // =================== In-Memory Database & Hub ===================
@@ -70,9 +71,9 @@ type UserStore struct {
 var userStore = &UserStore{users: make(map[string]*User)}
 
 type Hub struct {
-	youtuberQueue []*Client
-	investorQueue []*Client
-	allQueue      []*Client
+	youtuberQueue []*Client // اليوتيوبرز المتفرغون
+	investorQueue []*Client // المستثمرون المتفرغون
+	allQueue      []*Client // المستخدمون العاديون / المطابقة العامة
 	clients       map[string]*Client
 	mu            sync.Mutex
 }
@@ -91,40 +92,54 @@ func (h *Hub) RegisterClient(client *Client) {
 	defer h.mu.Unlock()
 
 	h.clients[client.ID] = client
-	log.Printf("Client registered: %s (User: %s, Role: %s)", client.ID, client.FullName, client.Role)
+	log.Printf("Client registered: %s (User: %s, RealRole: %s, TargetFilter: %s)",
+		client.ID, client.FullName, client.UserRole, client.TargetFilter)
 
 	h.matchClient(client)
 }
 
+// دالة مطابقة ذكية تربط المستهدف بالنوع المطلوب
 func (h *Hub) matchClient(client *Client) {
-	switch client.Role {
-	case "youtuber":
+	// 1. إذا كان العميل يطلب المطابقة مع Youtuber حصراً (ويملك الصلاحية)
+	if client.TargetFilter == "youtuber" {
 		if len(h.youtuberQueue) > 0 {
 			peer := h.youtuberQueue[0]
 			h.youtuberQueue = h.youtuberQueue[1:]
 			h.pairClients(client, peer)
 			return
 		}
-		h.youtuberQueue = append(h.youtuberQueue, client)
+	}
 
-	case "investor":
+	// 2. إذا كان العميل يطلب المطابقة مع Investor حصراً (ويملك الصلاحية)
+	if client.TargetFilter == "investor" {
 		if len(h.investorQueue) > 0 {
 			peer := h.investorQueue[0]
 			h.investorQueue = h.investorQueue[1:]
 			h.pairClients(client, peer)
 			return
 		}
-		h.investorQueue = append(h.investorQueue, client)
-
-	default: // "user" or "all"
-		if len(h.allQueue) > 0 {
-			peer := h.allQueue[0]
-			h.allQueue = h.allQueue[1:]
-			h.pairClients(client, peer)
-			return
-		}
-		h.allQueue = append(h.allQueue, client)
 	}
+
+	// 3. إذا كان العميل نفسه صانع محتوى أو مستثمر، يتم إدراجه في طابور التخصص المقابل ليجده المفلترون
+	if client.UserRole == "youtuber" {
+		h.youtuberQueue = append(h.youtuberQueue, client)
+		return
+	}
+	if client.UserRole == "investor" {
+		h.investorQueue = append(h.investorQueue, client)
+		return
+	}
+
+	// 4. المطابقة العادية المباشرة للجميع (All Users Queue)
+	if len(h.allQueue) > 0 {
+		peer := h.allQueue[0]
+		h.allQueue = h.allQueue[1:]
+		h.pairClients(client, peer)
+		return
+	}
+
+	// إضافة العميل إلى طابور الانتظار العام
+	h.allQueue = append(h.allQueue, client)
 }
 
 func (h *Hub) pairClients(c1, c2 *Client) {
@@ -229,12 +244,11 @@ func parseToken(tokenStr string) (jwt.MapClaims, error) {
 // =================== Main Server ===================
 
 func main() {
-	// إنشاء مجلد الرفوعات للملفات إن لم يكن موجوداً
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
-		BodyLimit: 10 * 1024 * 1024, // 10MB limit for uploads
+		BodyLimit: 10 * 1024 * 1024,
 	})
 
 	app.Use(logger.New())
@@ -243,7 +257,6 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
 
-	// إمكانية الوصول إلى الملفات المرفوعة
 	app.Static("/uploads", "./uploads")
 
 	hub := newHub()
@@ -254,7 +267,6 @@ func main() {
 	api.Post("/signup", func(c *fiber.Ctx) error {
 		var req RegisterRequest
 
-		// محاولة القراءة من JSON أو Form Body
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
 		}
@@ -267,7 +279,6 @@ func main() {
 			req.Role = "user"
 		}
 
-		// التحقق من متطلبات الدور المحدد
 		if req.Role == "youtuber" && req.YoutubeUrl == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "YouTube channel or video URL is required for YouTuber role"})
 		}
@@ -279,7 +290,6 @@ func main() {
 				return c.Status(400).JSON(fiber.Map{"error": "Payoneer / Py Merchant Card ID is required for Investor role"})
 			}
 
-			// معالجة رفع الملف (Project Proof)
 			file, err := c.FormFile("projectProof")
 			if err != nil {
 				return c.Status(400).JSON(fiber.Map{"error": "Project proof file (PDF/Doc) is required for Investors"})
@@ -292,7 +302,7 @@ func main() {
 
 			projectProofPath = fmt.Sprintf("./uploads/%s_%s", uuid.New().String(), file.Filename)
 			if err := c.SaveFile(file, projectProofPath); err != nil {
-				return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
+                return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
 			}
 		}
 
@@ -357,7 +367,7 @@ func main() {
 		})
 	})
 
-	// ---------------- WebSocket Upgrade Check & Optional Auth ----------------
+	// ---------------- WebSocket Upgrade Check & Strict Auth ----------------
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			tokenStr := c.Query("token")
@@ -371,7 +381,7 @@ func main() {
 				}
 			}
 
-			// إذا لم يوجد التوكن أو كان غير صالح، يتم معالجته كزائر Guest
+			// للزوار غير المسجلين
 			guestID := uuid.New().String()
 			c.Locals("userId", guestID)
 			c.Locals("fullName", "Guest_"+guestID[:5])
@@ -383,26 +393,34 @@ func main() {
 
 	// ---------------- WebSocket Connection Point ----------------
 	app.Get("/ws/live", websocket.New(func(c *websocket.Conn) {
-		roleQuery := c.Query("role")
-		role, _ := c.Locals("role").(string)
-
-		if roleQuery != "" {
-			role = roleQuery
+		// 1. الحصول على دور المستخدم الفعلي الموثق من التوكن (JWT)
+		realRole, _ := c.Locals("role").(string)
+		if realRole == "" {
+			realRole = "user"
 		}
 
-		if role != "youtuber" && role != "investor" && role != "user" {
-			role = "all"
+		// 2. قراءة الفلتر المطلوبة من الـ Query Parameter
+		targetFilter := c.Query("role")
+
+		// 3. الحماية الأمنية: منع المستخدم العادي من استخدام فلاتر خاصة بالحسابات المحددة
+		if realRole == "user" && (targetFilter == "youtuber" || targetFilter == "investor") {
+			targetFilter = "all" // إلغاء الفلتر ومنع الاختراق
+		}
+
+		if targetFilter != "youtuber" && targetFilter != "investor" {
+			targetFilter = "all"
 		}
 
 		userId, _ := c.Locals("userId").(string)
 		fullName, _ := c.Locals("fullName").(string)
 
 		client := &Client{
-			ID:       uuid.New().String(),
-			UserID:   userId,
-			FullName: fullName,
-			Conn:     c,
-			Role:     role,
+			ID:           uuid.New().String(),
+			UserID:       userId,
+			FullName:     fullName,
+			Conn:         c,
+			UserRole:     realRole,
+			TargetFilter: targetFilter,
 		}
 
 		hub.RegisterClient(client)
@@ -433,7 +451,7 @@ func main() {
 	app.Get("/api/v1/health", func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status":  "success",
-			"message": "Live-Aleo server is running smoothly",
+			"message": "Live-Aleo backend is running securely",
 		})
 	})
 
