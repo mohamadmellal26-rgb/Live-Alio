@@ -13,7 +13,8 @@ import {
   User as UserIcon,
   Mail,
   Edit3,
-  Plus
+  Plus,
+  X
 } from 'lucide-react';
 import { useUserProfile } from './hooks/useUserProfile';
 import './Profile.css';
@@ -21,11 +22,11 @@ import './Profile.css';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
 
 export const ProfilePage: React.FC = () => {
-  // 1. استخراج اسم المستخدم من المسار
   const { username: pathUsername } = useParams<{ username?: string }>();
   const [searchParams] = useSearchParams();
-  const queryUsername = searchParams.get('user') || searchParams.get('protfile');
+  const queryUsername = searchParams.get('user') || searchParams.get('profile');
 
+  // استخراج المستخدم المستهدف من المسار أو الاستعلام
   const targetUsername = pathUsername || queryUsername || undefined;
 
   const { data, isLoading, error } = useUserProfile(targetUsername);
@@ -33,25 +34,29 @@ export const ProfilePage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'content' | 'reviews' | 'about'>('content');
   const [imgError, setImgError] = useState(false);
 
-  // حالة التعديل وإضافة المحتوى
   const [isEditing, setIsEditing] = useState(false);
   const [showAddContentModal, setShowAddContentModal] = useState(false);
+
+  // 1. قراءة بيانات المستخدم الحالي المسجل في الجلسة المحلية (Local Storage)
+  const storedUserRaw = localStorage.getItem('user');
+  const token = localStorage.getItem('token');
+  const currentUser = storedUserRaw ? JSON.parse(storedUserRaw) : null;
 
   if (isLoading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#fff' }}>
-        <p>Loading user profile...</p>
+        <p>Loading profile...</p>
       </div>
     );
   }
 
-  if (error || !data) {
+  if (error || !data || !data.profile) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#ff22ff', gap: '1rem' }}>
         <ShieldCheck size={48} />
-        <h2>Access Denied / Profile Not Found</h2>
+        <h2>Profile Not Found</h2>
         <p style={{ color: '#a1a1aa' }}>
-          {targetUsername ? `Could not load profile for "${targetUsername}".` : 'Please sign in to view your profile dashboard.'}
+          {targetUsername ? `User "${targetUsername}" does not exist or profile is private.` : 'Please sign in to view your profile dashboard.'}
         </p>
       </div>
     );
@@ -59,17 +64,12 @@ export const ProfilePage: React.FC = () => {
 
   const { profile: user, contents = [], primaryColor = '#e056fd' } = data;
 
-  // 2. التحقق من ملكية الحساب (الكوكي / التوكن في LocalStorage)
-  const storedUserRaw = localStorage.getItem('user');
-  const token = localStorage.getItem('token');
-  const currentUser = storedUserRaw ? JSON.parse(storedUserRaw) : null;
-
+  // 2. تحديد إذا كان الزائر هو المالك الحقيقي للبروفايل
   const isOwner = Boolean(
     token && currentUser && (
-      currentUser.id === user.id ||
-      currentUser._id === user.id ||
-      currentUser.email === user.email ||
-      !targetUsername
+      (currentUser.id && currentUser.id === user.id) ||
+      (currentUser._id && currentUser._id === user.id) ||
+      (currentUser.email && user.email && currentUser.email.toLowerCase() === user.email.toLowerCase())
     )
   );
 
@@ -100,9 +100,7 @@ export const ProfilePage: React.FC = () => {
                     alt={user.fullName} 
                     className="profile-avatar-img" 
                     style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-                    onError={() => {
-                      setImgError(true);
-                    }}
+                    onError={() => setImgError(true)}
                   />
                 ) : (
                   <div className="profile-avatar-img" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1e1e24', color: '#fff', width: '100%', height: '100%', borderRadius: '50%' }}>
@@ -126,7 +124,7 @@ export const ProfilePage: React.FC = () => {
               </div>
             </div>
 
-            {/* الأزرار الديناميكية بناءً على حالة الملكية (isOwner) */}
+            {/* الأزرار الديناميكية: تظهر Edit و Add فقط للـ Owner، أما باقي الزوار فيظهر لهم زر Connect */}
             <div className="profile-actions" style={{ display: 'flex', gap: '0.75rem' }}>
               <button className="btn-secondary-action">
                 <Share2 size={16} /> Share
@@ -158,7 +156,7 @@ export const ProfilePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Bio & Meta */}
+          {/* Bio & Information */}
           <div className="profile-bio-box">
             {user.bio && <p className="profile-bio-text">{user.bio}</p>}
             <div className="profile-meta-row">
@@ -185,7 +183,7 @@ export const ProfilePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Dynamic Stats */}
+          {/* Stats Ribbon */}
           {user.stats && (
             <div className="stats-ribbon">
               {user.stats.stat1Label && (
@@ -200,24 +198,12 @@ export const ProfilePage: React.FC = () => {
                   <span className="stat-label">{user.stats.stat2Label}</span>
                 </div>
               )}
-              {user.stats.stat3Label && (
-                <div className="stat-box">
-                  <span className="stat-number">{user.stats.stat3Value || 0}</span>
-                  <span className="stat-label">{user.stats.stat3Label}</span>
-                </div>
-              )}
-              {user.stats.stat4Label && (
-                <div className="stat-box">
-                  <span className="stat-number">{user.stats.stat4Value || 0}</span>
-                  <span className="stat-label">{user.stats.stat4Label}</span>
-                </div>
-              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Main Grid Content Layout */}
+      {/* Main Grid Content */}
       <div className="profile-main-layout">
         <aside>
           {user.targetIndustry && (
@@ -307,10 +293,6 @@ export const ProfilePage: React.FC = () => {
                         )}
                         <div className="pitch-content">
                           <h4 className="pitch-title">{item.title}</h4>
-                          <p className="pitch-desc">
-                            {item.category ? `${item.category} ` : ''}
-                            {item.views !== undefined ? `${item.views.toLocaleString()} Views` : ''}
-                          </p>
                         </div>
                       </div>
                     ))}
@@ -337,6 +319,42 @@ export const ProfilePage: React.FC = () => {
           </div>
         </main>
       </div>
+
+      {/* Edit Profile Modal */}
+      {isEditing && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#1e1e24', padding: '2rem', borderRadius: '12px', width: '90%', maxWidth: '500px', border: '1px solid #333' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: '#fff' }}>Edit Profile</h3>
+              <button onClick={() => setIsEditing(false)} style={{ background: 'none', border: 'none', color: '#a1a1aa', cursor: 'pointer' }}>
+                <X size={20} />
+              </button>
+            </div>
+            <p style={{ color: '#a1a1aa', fontSize: '0.9rem' }}>Profile editing feature coming soon.</p>
+            <button onClick={() => setIsEditing(false)} style={{ marginTop: '1rem', background: primaryColor, color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer' }}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add Content Modal */}
+      {showAddContentModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#1e1e24', padding: '2rem', borderRadius: '12px', width: '90%', maxWidth: '500px', border: '1px solid #333' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: '#fff' }}>Add New Content</h3>
+              <button onClick={() => setShowAddContentModal(false)} style={{ background: 'none', border: 'none', color: '#a1a1aa', cursor: 'pointer' }}>
+                <X size={20} />
+              </button>
+            </div>
+            <p style={{ color: '#a1a1aa', fontSize: '0.9rem' }}>Upload project or demo video interface coming soon.</p>
+            <button onClick={() => setShowAddContentModal(false)} style={{ marginTop: '1rem', background: primaryColor, color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer' }}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

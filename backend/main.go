@@ -101,7 +101,7 @@ func (c *Client) Close() {
 }
 
 type UserStore struct {
-	users map[string]*User // key: email or id
+	users map[string]*User // key: email
 	mu    sync.RWMutex
 }
 
@@ -336,16 +336,46 @@ func main() {
 
 	api := app.Group("/api/v1")
 
-	// Endpoint لجلب بيانات المستخدم للـ ProfilePage
+	// Endpoint عام للبروفايل يدعم البحث باسم المستخدم أو الـ ID أو الـ JWT
 	api.Get("/user/profile", func(c *fiber.Ctx) error {
-		identifier := c.Query("identifier")
-		
+		identifier := strings.TrimSpace(c.Query("identifier"))
+		if identifier == "" {
+			identifier = strings.TrimSpace(c.Query("user"))
+		}
+
 		userStore.mu.RLock()
 		defer userStore.mu.RUnlock()
 
 		var foundUser *User
-		for _, u := range userStore.users {
-			if strings.EqualFold(u.Email, identifier) || u.ID == identifier || strings.EqualFold(u.FullName, identifier) {
+
+		// 1. إذا تم التمرير كـ query parameter
+		if identifier != "" {
+			for _, u := range userStore.users {
+				if strings.EqualFold(u.Email, identifier) ||
+					u.ID == identifier ||
+					strings.EqualFold(u.FullName, identifier) {
+					foundUser = u
+					break
+				}
+			}
+		}
+
+		// 2. إذا لم يمرر identifier، محاولة قراءة Authorization Header
+		if foundUser == nil {
+			authHeader := c.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+				if claims, err := parseToken(tokenStr); err == nil {
+					if email, ok := claims["email"].(string); ok {
+						foundUser = userStore.users[email]
+					}
+				}
+			}
+		}
+
+		// 3. Fallback: إرجاع أول مستخدم متوفر في الـ Store
+		if foundUser == nil && len(userStore.users) > 0 {
+			for _, u := range userStore.users {
 				foundUser = u
 				break
 			}
@@ -357,7 +387,7 @@ func main() {
 
 		return c.JSON(fiber.Map{
 			"profile":      foundUser,
-			"contents":     []interface{}{}, // يمكن إضافة الـ Uploads لاحقاً
+			"contents":     []interface{}{},
 			"primaryColor": "#e056fd",
 		})
 	})
