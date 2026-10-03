@@ -249,6 +249,7 @@ export const Dashboard: React.FC = () => {
     ws.onopen = () => {
       if (locationState?.activeCallId || locationState?.autoConnectPeerId) {
         setIsConnectedToPeer(true);
+        if (locationState.peerName) setPeerName(locationState.peerName);
         ws.send(JSON.stringify({
           type: 'init_direct_call',
           callId: locationState.activeCallId,
@@ -270,6 +271,22 @@ export const Dashboard: React.FC = () => {
       wsRef.current = null;
     };
   }, [filters.targetType, handleSignalingMessage, locationState]);
+
+  // إرسال إشارة الاتصال المباشر فور فتح الـ WebSocket إذا أتى المستخدم محولاً من البروفايل
+  useEffect(() => {
+    if (locationState?.activeCallId || locationState?.autoConnectPeerId) {
+      setIsConnectedToPeer(true);
+      if (locationState.peerName) setPeerName(locationState.peerName);
+
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'init_direct_call',
+          callId: locationState.activeCallId,
+          peerId: locationState.autoConnectPeerId
+        }));
+      }
+    }
+  }, [locationState]);
 
   const handleStopSession = useCallback(() => {
     sendSignal({ type: 'leave' });
@@ -421,7 +438,6 @@ export const Dashboard: React.FC = () => {
 
         <div className="dashboard-content">
           <div className="cam-studio-wrapper">
-            {/* الشاشة المحلية */}
             <div className="cam-box local-cam">
               <span className="cam-label">YOU ({user.fullName || 'User'})</span>
               <video 
@@ -433,7 +449,6 @@ export const Dashboard: React.FC = () => {
               />
             </div>
 
-            {/* الشاشة البعيدة */}
             <div className={`cam-box remote-cam ${isSearching ? 'searching' : ''}`}>
               <span className="cam-label">
                 {isSearching 

@@ -18,7 +18,7 @@ import {
   Loader
 } from 'lucide-react';
 import { useUserProfile } from './hooks/useUserProfile';
-import LiveCallNotification, { CallRequestData } from './LiveCallNotification';
+import LiveCallNotification, { type CallRequestData } from './LiveCallNotification';
 import './Profile.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
@@ -67,7 +67,7 @@ export const ProfilePage: React.FC = () => {
       try {
         const message = JSON.parse(event.data);
 
-        // استقبال طلب اتصال فريد موجّه للمستخدم الحالي
+        // استقبال طلب اتصال موجّه للمستخدم الحالي
         if (message.type === 'incoming_call_request') {
           setIncomingCall({
             id: message.callId,
@@ -78,10 +78,16 @@ export const ProfilePage: React.FC = () => {
           });
         }
 
-        // عند قبول الطرف الآخر للاتصال -> الانتقال فوراً للداشبورد لبدء الـ WebRTC Call
+        // عند قبول الطرف الآخر للاتصال -> الانتقال فوراً للداشبورد
         if (message.type === 'call_accepted') {
           setIsCalling(false);
-          navigate('/dashboard', { state: { autoConnectPeerId: message.peerId, peerName: message.peerName } });
+          navigate('/dashboard', { 
+            state: { 
+              autoConnectPeerId: message.peerId, 
+              activeCallId: message.callId,
+              peerName: message.peerName || 'Partner' 
+            } 
+          });
         }
 
         // عند رفض الطرف الآخر للاتصال
@@ -141,7 +147,7 @@ export const ProfilePage: React.FC = () => {
   const avatarPath = user.avatarUrl || (user as unknown as { avatar?: string }).avatar;
   const avatarSrc = getFullImageUrl(avatarPath);
 
-  // دالة التعامل مع زر Connect إرسال الإشعار للمستلم
+  // دالة التعامل مع زر Connect
   const handleConnectClick = () => {
     if (!token) {
       alert('يرجى تسجيل الدخول أولاً للاتصال بالمستخدم.');
@@ -152,7 +158,7 @@ export const ProfilePage: React.FC = () => {
       setIsCalling(true);
       wsRef.current.send(JSON.stringify({
         type: 'send_call_request',
-        targetUserId: user.id,
+        targetUserId: user.id || (user as any)._id,
         callerName: currentUser?.fullName || currentUser?.username || 'مستخدم',
         callerRole: currentUser?.role || 'User',
         callerAvatarUrl: currentUser?.avatarUrl
@@ -162,7 +168,7 @@ export const ProfilePage: React.FC = () => {
     }
   };
 
-  // قبول اتصال وارد من طرف مستخدم آخر والتوجيه للداشبورد
+  // قبول اتصال وارد والتوجيه للداشبورد
   const handleAcceptCall = (requestId: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
@@ -170,8 +176,9 @@ export const ProfilePage: React.FC = () => {
         callId: requestId
       }));
     }
+    const callerName = incomingCall?.callerName || 'Partner';
     setIncomingCall(null);
-    navigate('/dashboard', { state: { activeCallId: requestId, peerName: incomingCall?.callerName } });
+    navigate('/dashboard', { state: { activeCallId: requestId, peerName: callerName } });
   };
 
   // رفض اتصال وارد
@@ -187,14 +194,12 @@ export const ProfilePage: React.FC = () => {
 
   return (
     <div className="profile-page-container" dir="ltr">
-      {/* إشعار الاتصال الوارد */}
       <LiveCallNotification 
         request={incomingCall} 
         onAccept={handleAcceptCall} 
         onDecline={handleDeclineCall} 
       />
 
-      {/* Header Area */}
       <div className="profile-hero">
         <div className="profile-cover" style={{ background: `linear-gradient(135deg, ${primaryColor}22 0%, #121216 100%)` }} />
         
@@ -302,7 +307,6 @@ export const ProfilePage: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Grid Layout */}
       <div className="profile-main-layout">
         <aside>
           {user.targetIndustry && (
@@ -414,7 +418,6 @@ export const ProfilePage: React.FC = () => {
         </main>
       </div>
 
-      {/* Edit Modal */}
       {isEditing && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e1e24', padding: '2rem', borderRadius: '12px', width: '90%', maxWidth: '500px', border: '1px solid #333' }}>
@@ -432,7 +435,6 @@ export const ProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Add Content Modal */}
       {showAddContentModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e1e24', padding: '2rem', borderRadius: '12px', width: '90%', maxWidth: '500px', border: '1px solid #333' }}>
