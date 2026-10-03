@@ -580,7 +580,7 @@ func main() {
 
 			if peer != nil {
 				peer.SafeWrite(message)
-			} else: roomID != "" { // تم تعديلها إلى الصيغة الصحيحة في الأسفل
+			} else if roomID != "" {
 				hub.ForwardSignalToRoom(client, message)
 			}
 		}
