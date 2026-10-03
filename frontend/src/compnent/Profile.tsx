@@ -24,9 +24,9 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrend
 export const ProfilePage: React.FC = () => {
   const { username: pathUsername } = useParams<{ username?: string }>();
   const [searchParams] = useSearchParams();
-  const queryUsername = searchParams.get('user') || searchParams.get('profile');
+  const queryUsername = searchParams.get('user') || searchParams.get('profile') || searchParams.get('identifier');
 
-  // استخراج المستخدم المستهدف من المسار أو الاستعلام
+  // استخراج اسم المستخدم المستهدف من المسار أو Query Params
   const targetUsername = pathUsername || queryUsername || undefined;
 
   const { data, isLoading, error } = useUserProfile(targetUsername);
@@ -37,10 +37,18 @@ export const ProfilePage: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [showAddContentModal, setShowAddContentModal] = useState(false);
 
-  // 1. قراءة بيانات المستخدم الحالي المسجل في الجلسة المحلية (Local Storage)
+  // قراءة بيانات الجلسة الحالية بأمان من LocalStorage
   const storedUserRaw = localStorage.getItem('user');
   const token = localStorage.getItem('token');
-  const currentUser = storedUserRaw ? JSON.parse(storedUserRaw) : null;
+  
+  let currentUser: any = null;
+  if (storedUserRaw) {
+    try {
+      currentUser = JSON.parse(storedUserRaw);
+    } catch (e) {
+      currentUser = null;
+    }
+  }
 
   if (isLoading) {
     return (
@@ -64,11 +72,13 @@ export const ProfilePage: React.FC = () => {
 
   const { profile: user, contents = [], primaryColor = '#e056fd' } = data;
 
-  // 2. تحديد إذا كان الزائر هو المالك الحقيقي للبروفايل
+  // 2. التحقق الدقيق مما إذا كان الزائر هو المالك الأصلي للحساب
+  // نضمن ألا يُمنح إذن المالك إلا عند تطابق المعرفات أو البريد أو اسم المستخدم بين الجلسة والبروفايل
   const isOwner = Boolean(
-    token && currentUser && (
-      (currentUser.id && currentUser.id === user.id) ||
-      (currentUser._id && currentUser._id === user.id) ||
+    token && currentUser && user && (
+      (currentUser.id && String(currentUser.id) === String(user.id)) ||
+      (currentUser._id && String(currentUser._id) === String(user.id)) ||
+      (currentUser.username && (user as any).username && currentUser.username.toLowerCase() === (user as any).username.toLowerCase()) ||
       (currentUser.email && user.email && currentUser.email.toLowerCase() === user.email.toLowerCase())
     )
   );
@@ -124,7 +134,7 @@ export const ProfilePage: React.FC = () => {
               </div>
             </div>
 
-            {/* الأزرار الديناميكية: تظهر Edit و Add فقط للـ Owner، أما باقي الزوار فيظهر لهم زر Connect */}
+            {/* الأزرار الديناميكية: أزرار التعديل والإضافة للمالك فقط، وزر Connect للزوار من جميع الأجهزة */}
             <div className="profile-actions" style={{ display: 'flex', gap: '0.75rem' }}>
               <button className="btn-secondary-action">
                 <Share2 size={16} /> Share

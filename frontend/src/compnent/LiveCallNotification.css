@@ -1,0 +1,209 @@
+.live-call-toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  animation: slideInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  max-width: 380px;
+  width: calc(100vw - 32px);
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.live-call-card {
+  background: rgba(26, 26, 32, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(224, 86, 253, 0.35);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(224, 86, 253, 0.15);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  color: #ffffff;
+}
+
+/* Pulse Animation */
+.live-call-pulse-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.live-call-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e056fd 0%, #00f2fe 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  z-index: 2;
+}
+
+.live-call-pulse-ring {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid #e056fd;
+  animation: ripplePulse 1.8s infinite ease-out;
+  z-index: 1;
+}
+
+@keyframes ripplePulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.live-call-details {
+  flex: 1;
+}
+
+.live-call-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.live-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #e056fd;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+}
+
+.live-call-close-btn {
+  background: transparent;
+  border: none;
+  color: #a1a1aa;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  transition: color 0.2s ease;
+}
+
+.live-call-close-btn:hover {
+  color: #ffffff;
+}
+
+.live-caller-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.live-caller-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #27272a;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a1a1aa;
+}
+
+.live-caller-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.live-caller-name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f4f4f5;
+}
+
+.live-caller-role {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #a1a1aa;
+  text-transform: capitalize;
+}
+
+.live-call-note {
+  font-size: 0.8rem;
+  color: #d4d4d8;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 6px 10px;
+  border-radius: 8px;
+  margin: 0 0 12px 0;
+  font-style: italic;
+  border-left: 2px solid #e056fd;
+}
+
+.live-call-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-call-accept, .btn-call-decline {
+  flex: 1;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: transform 0.15s ease, opacity 0.2s ease;
+}
+
+.btn-call-accept {
+  background: linear-gradient(135deg, #e056fd 0%, #b832d8 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(224, 86, 253, 0.3);
+}
+
+.btn-call-decline {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f4f4f5;
+}
+
+.btn-call-accept:hover, .btn-call-decline:hover {
+  transform: translateY(-1px);
+}
+
+.btn-call-accept:active, .btn-call-decline:active {
+  transform: translateY(0);
+}

@@ -2,59 +2,16 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 )
-
-var jwtSecret = []byte("super_secret_live_aleo_key_2026")
-
-// توسيع هيكل المستخدم ليدعم جميع بيانات البروفايل
-type User struct {
-	ID             string    `json:"id"`
-	FullName       string    `json:"fullName"`
-	Email          string    `json:"email"`
-	Password       string    `json:"-"`
-	Role           string    `json:"role"`
-	Avatar         string    `json:"avatarUrl,omitempty"`
-	Bio            string    `json:"bio,omitempty"`
-	Location       string    `json:"location,omitempty"`
-	Website        string    `json:"website,omitempty"`
-	TargetIndustry string    `json:"targetIndustry,omitempty"`
-	Skills         []string  `json:"skills,omitempty"`
-	FocusAreas     []string  `json:"focusAreas,omitempty"`
-	IsVerified     bool      `json:"isVerified"`
-	JoinedDate     string    `json:"joinedDate"`
-	YoutubeUrl     string    `json:"youtubeUrl,omitempty"`
-	PyCardId       string    `json:"pyCardId,omitempty"`
-	ProjectProof   string    `json:"projectProof,omitempty"`
-}
-
-type RegisterRequest struct {
-	FullName   string `json:"fullName" form:"fullName"`
-	Email      string `json:"email" form:"email"`
-	Password   string `json:"password" form:"password"`
-	Role       string `json:"role" form:"role"`
-	YoutubeUrl string `json:"youtubeUrl,omitempty" form:"youtubeUrl"`
-	PyCardId   string `json:"pyCardId,omitempty" form:"pyCardId"`
-}
-
-type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
 
 type SignalMessage struct {
 	Type      string      `json:"type"`
@@ -99,13 +56,6 @@ func (c *Client) Close() {
 		close(c.sendChan)
 	}
 }
-
-type UserStore struct {
-	users map[string]*User // key: email
-	mu    sync.RWMutex
-}
-
-var userStore = &UserStore{users: make(map[string]*User)}
 
 type Hub struct {
 	youtuberQueue []*Client
@@ -272,52 +222,11 @@ func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 	return result
 }
 
-func generateToken(user *User) (string, error) {
-	claims := jwt.MapClaims{
-		"userId":   user.ID,
-		"email":    user.Email,
-		"fullName": user.FullName,
-		"role":     user.Role,
-		"avatar":   user.Avatar,
-		"exp":      time.Now().Add(time.Hour * 72).Unix(),
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
-}
-
-func parseToken(tokenStr string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
-	})
-	if err != nil || !token.Valid {
-		return nil, err
-	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return nil, fiber.ErrUnauthorized
-	}
-	return claims, nil
-}
-
-func saveUploadedFile(c *fiber.Ctx, formKey string) (string, error) {
-	file, err := c.FormFile(formKey)
-	if err != nil {
-		return "", nil
-	}
-
-	ext := filepath.Ext(file.Filename)
-	filename := fmt.Sprintf("%s_%d%s", uuid.New().String(), time.Now().UnixNano(), ext)
-	savePath := filepath.Join("./uploads", filename)
-
-	if err := c.SaveFile(file, savePath); err != nil {
-		return "", err
-	}
-
-	return "/uploads/" + filename, nil
-}
-
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
+
+	// تهيئة الاتصال بقاعدة البيانات PostgreSQL
+	InitDB()
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
@@ -336,159 +245,13 @@ func main() {
 
 	api := app.Group("/api/v1")
 
-	// Endpoint عام للبروفايل يدعم البحث باسم المستخدم أو الـ ID أو الـ JWT
-	api.Get("/user/profile", func(c *fiber.Ctx) error {
-		identifier := strings.TrimSpace(c.Query("identifier"))
-		if identifier == "" {
-			identifier = strings.TrimSpace(c.Query("user"))
-		}
+	// مسارات الـ Auth
+	api.Get("/user/profile", handleGetUserProfile)
+	api.Post("/signup", handleSignup)
+	api.Post("/login", handleLogin)
 
-		userStore.mu.RLock()
-		defer userStore.mu.RUnlock()
-
-		var foundUser *User
-
-		// 1. إذا تم التمرير كـ query parameter
-		if identifier != "" {
-			for _, u := range userStore.users {
-				if strings.EqualFold(u.Email, identifier) ||
-					u.ID == identifier ||
-					strings.EqualFold(u.FullName, identifier) {
-					foundUser = u
-					break
-				}
-			}
-		}
-
-		// 2. إذا لم يمرر identifier، محاولة قراءة Authorization Header
-		if foundUser == nil {
-			authHeader := c.Get("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-				if claims, err := parseToken(tokenStr); err == nil {
-					if email, ok := claims["email"].(string); ok {
-						foundUser = userStore.users[email]
-					}
-				}
-			}
-		}
-
-		// 3. Fallback: إرجاع أول مستخدم متوفر في الـ Store
-		if foundUser == nil && len(userStore.users) > 0 {
-			for _, u := range userStore.users {
-				foundUser = u
-				break
-			}
-		}
-
-		if foundUser == nil {
-			return c.Status(404).JSON(fiber.Map{"error": "User not found"})
-		}
-
-		return c.JSON(fiber.Map{
-			"profile":      foundUser,
-			"contents":     []interface{}{},
-			"primaryColor": "#e056fd",
-		})
-	})
-
-	api.Post("/signup", func(c *fiber.Ctx) error {
-		var req RegisterRequest
-
-		if err := c.BodyParser(&req); err != nil {
-			req.FullName = c.FormValue("fullName")
-			req.Email = c.FormValue("email")
-			req.Password = c.FormValue("password")
-			req.Role = c.FormValue("role")
-			req.YoutubeUrl = c.FormValue("youtubeUrl")
-			req.PyCardId = c.FormValue("pyCardId")
-		}
-
-		if req.Email == "" || req.Password == "" || req.FullName == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "Missing required fields"})
-		}
-
-		if req.Role == "" {
-			req.Role = "user"
-		}
-
-		userStore.mu.Lock()
-		if _, exists := userStore.users[req.Email]; exists {
-			userStore.mu.Unlock()
-			return c.Status(400).JSON(fiber.Map{"error": "Email already exists"})
-		}
-
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			userStore.mu.Unlock()
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to process password"})
-		}
-
-		avatarPath, err := saveUploadedFile(c, "avatar")
-		if err != nil {
-			userStore.mu.Unlock()
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to save avatar image"})
-		}
-
-		proofPath, err := saveUploadedFile(c, "projectProof")
-		if err != nil {
-			userStore.mu.Unlock()
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to save project proof file"})
-		}
-
-		newUser := &User{
-			ID:           uuid.New().String(),
-			FullName:     req.FullName,
-			Email:        req.Email,
-			Password:     string(hashedPassword),
-			Role:         req.Role,
-			Avatar:       avatarPath,
-			Bio:          "Full-Stack Software Engineer & Platform Innovator",
-			JoinedDate:   time.Now().Format("Jan 2006"),
-			IsVerified:   true,
-			YoutubeUrl:   req.YoutubeUrl,
-			PyCardId:     req.PyCardId,
-			ProjectProof: proofPath,
-		}
-
-		userStore.users[req.Email] = newUser
-		userStore.mu.Unlock()
-
-		token, err := generateToken(newUser)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to generate token"})
-		}
-
-		return c.Status(201).JSON(fiber.Map{
-			"token": token,
-			"user":  newUser,
-		})
-	})
-
-	api.Post("/login", func(c *fiber.Ctx) error {
-		var req LoginRequest
-		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
-		}
-
-		userStore.mu.RLock()
-		user, exists := userStore.users[req.Email]
-		userStore.mu.RUnlock()
-
-		if !exists || bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)) != nil {
-			return c.Status(401).JSON(fiber.Map{"error": "Invalid email or password"})
-		}
-
-		token, err := generateToken(user)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to generate token"})
-		}
-
-		return c.JSON(fiber.Map{
-			"token": token,
-			"user":  user,
-		})
-	})
+	// مسارات خادم الإشعارات
+	SetupNotificationRoutes(app)
 
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {

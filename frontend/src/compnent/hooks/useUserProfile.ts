@@ -42,7 +42,6 @@ interface UserSessionResponse {
   primaryColor?: string;
 }
 
-// تصحيح الرابط بإضافة "-1" ليتطابق مع Auth.tsx
 const API_BASE_URL = 'https://live-alio-1.onrender.com/api/v1';
 
 export const useUserProfile = (username?: string) => {
@@ -60,12 +59,13 @@ export const useUserProfile = (username?: string) => {
         const storedUserRaw = localStorage.getItem('user');
         const parsedUser = storedUserRaw ? JSON.parse(storedUserRaw) : null;
 
-        // تحديد مسار Request الصحيح
-        const endpoint = username 
-          ? `${API_BASE_URL}/users/${username}`
-          : `${API_BASE_URL}/profile`;
+        // 1. إعداد الـ Endpoint الصحيح المتوافق مع Go Fiber (/api/v1/user/profile)
+        let endpoint = `${API_BASE_URL}/user/profile`;
+        if (username) {
+          endpoint += `?identifier=${encodeURIComponent(username)}`;
+        }
 
-        // 1. محاولة جلب البيانات من الـ API
+        // 2. محاولة جلب البيانات من الـ API
         try {
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -82,7 +82,7 @@ export const useUserProfile = (username?: string) => {
 
           if (response.ok) {
             const result: UserSessionResponse = await response.json();
-            
+
             if (result.profile) {
               const apiAvatar = result.profile.avatarUrl || (result.profile as any).avatar;
               if (apiAvatar) {
@@ -98,18 +98,20 @@ export const useUserProfile = (username?: string) => {
           console.warn('Network or API Error, falling back to local user:', networkErr);
         }
 
-        // 2. Fallback: إذا فشل الـ API وكان البروفايل المعروض هو نفس المستخدم الحالي في localStorage
+        // 3. Fallback: استخدام البيانات المحلية إذا فشل الاتصال بالباك إند وكانت الصفحة تخص المستخدم الحالي
         const currentUserId = parsedUser?.id || parsedUser?._id;
         const currentUsername = parsedUser?.username;
+        const currentEmail = parsedUser?.email;
 
-        const isSelfProfile = 
-          !username || 
-          username === currentUserId || 
-          username === currentUsername;
+        const isSelfProfile =
+          !username ||
+          username === currentUserId ||
+          username === currentUsername ||
+          username === currentEmail;
 
         if (parsedUser && isSelfProfile) {
           const rawAvatar = parsedUser.avatarUrl || parsedUser.avatar || parsedUser.profilePicture || '';
-          
+
           setData({
             profile: {
               id: parsedUser.id || parsedUser._id || '1',
@@ -121,18 +123,22 @@ export const useUserProfile = (username?: string) => {
               avatarUrl: rawAvatar,
               location: parsedUser.location || '',
               website: parsedUser.youtubeUrl || parsedUser.website || '',
-              joinedDate: parsedUser.createdAt ? new Date(parsedUser.createdAt).toLocaleDateString() : 'Recent',
+              joinedDate: parsedUser.createdAt
+                ? new Date(parsedUser.createdAt).toLocaleDateString()
+                : 'Recent',
               bio: parsedUser.bio || '',
               targetIndustry: parsedUser.targetIndustry || '',
               skills: parsedUser.skills || [],
               focusAreas: parsedUser.focusAreas || [],
-              stats: parsedUser.stats || undefined
+              stats: parsedUser.stats || undefined,
             },
             contents: parsedUser.contents || [],
-            primaryColor: '#e056fd'
+            primaryColor: '#e056fd',
           });
         } else {
-          throw new Error(username ? `Could not load profile for "${username}".` : 'Failed to load profile session.');
+          throw new Error(
+            username ? `Could not load profile for "${username}".` : 'Failed to load profile session.'
+          );
         }
       } catch (err: any) {
         setError(err.message || 'Error loading profile.');

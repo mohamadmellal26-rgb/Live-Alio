@@ -131,6 +131,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
     try {
       let response: Response;
 
+      // عند رفع ملفات، نستخدم FormData بشكل كامل لتمرير جميع القيم بشكل متعدد الأجزاء Multipart
       if (isSignUp && (avatarFile || projectProof)) {
         const formData = new FormData();
         formData.append('fullName', fullName);
@@ -203,7 +204,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
         youtubeUrl,
       };
 
-      // تحديد اسم مستخدم افتراضي آمن في حالة عدم توفره من الـ API
+      // تحديد اسم مستخدم افتراضي آمن في حالة عدم توفره مباشرة من الـ Backend
       const fallbackUsername = 
         rawUserData.username || 
         rawUserData.id || 
@@ -228,7 +229,7 @@ export const Auth: React.FC<AuthProps> = ({ onLoginSuccess, onBackToHome }) => {
       } else if (onBackToHome) {
         onBackToHome();
       } else {
-        // التوجيه الصحيح بالرابط الديناميكي
+        // التوجيه الصحيح بالرابط الديناميكي مع مراعاة اسم المستخدم
         window.location.href = `/profile/${userData.username}`;
       }
 
