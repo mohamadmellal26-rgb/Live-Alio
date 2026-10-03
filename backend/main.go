@@ -396,7 +396,6 @@ func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 	return result
 }
 
-// دوال المصادقة واستقبال البيانات المدعومة بـ Multipart / JSON المتوافقة مع الواجهة
 func handleSignup(c *fiber.Ctx) error {
 	fullName := c.FormValue("fullName")
 	if fullName == "" {
@@ -414,7 +413,6 @@ func handleSignup(c *fiber.Ctx) error {
 		role = "user"
 	}
 
-	// معالجة الملفات المرفوعة إن وجدت (Avatar أو ProjectProof)
 	var avatarUrl string
 	file, err := c.FormFile("avatar")
 	if err == nil && file != nil {
@@ -425,7 +423,6 @@ func handleSignup(c *fiber.Ctx) error {
 		}
 	}
 
-	// توليد توكن وتجريبي للمستخدم الجديد ليعود بنجاح للـ Frontend
 	fakeToken := uuid.New().String()
 
 	return c.Status(201).JSON(fiber.Map{
@@ -501,7 +498,7 @@ func handleUploadContent(c *fiber.Ctx) error {
 func handleDeleteContent(c *fiber.Ctx) error {
 	contentID := c.Params("id")
 	if contentID == "" {
-       [cite: 2]return c.Status(400).JSON(fiber.Map{"error": "Content ID is required"})
+		return c.Status(400).JSON(fiber.Map{"error": "Content ID is required"})
 	}
 
 	return c.JSON(fiber.Map{
@@ -511,7 +508,6 @@ func handleDeleteContent(c *fiber.Ctx) error {
 }
 
 func parseToken(tokenStr string) (*Claims, error) {
-	// دالة مساعدة مبسطة لتحليل التوكن
 	return &Claims{
 		UserID: "mock_user_id",
 		Email:  "user@example.com",
