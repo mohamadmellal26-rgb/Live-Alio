@@ -67,6 +67,7 @@ export const ProfilePage: React.FC = () => {
     return null;
   });
 
+  // تحديد المعرف المستهدف (يعمل للعامة وبدون الحاجة لتسجيل الدخول)
   const targetIdentifierRaw = pathIdentifier || queryUsername;
   const targetUsername = targetIdentifierRaw || (
     window.location.pathname === '/profile' && (currentUser?.username || currentUser?.id || currentUser?.ID) 
@@ -74,6 +75,7 @@ export const ProfilePage: React.FC = () => {
       : undefined
   );
 
+  // جلب بيانات البروفايل للجميع سواء بوجود توكين أو بدونه
   const { data, isLoading, error, refetch } = useUserProfile(targetUsername) as any;
 
   const [localProfile, setLocalProfile] = useState<any>(null);
@@ -151,6 +153,7 @@ export const ProfilePage: React.FC = () => {
     setImgError(false);
   }, [avatarSrc, targetUsername]);
 
+  // الاتصال بـ WebSocket فقط إذا كان المستخدم مسجل الدخول
   useEffect(() => {
     if (!token) return;
 
@@ -220,7 +223,7 @@ export const ProfilePage: React.FC = () => {
         <ShieldCheck size={48} />
         <h2>Profile Not Found</h2>
         <p style={{ color: '#a1a1aa' }}>
-          {targetUsername ? `User "${targetUsername}" does not exist or profile is private.` : 'Please check the profile link or sign in.'}
+          {targetUsername ? `User "${targetUsername}" does not exist.` : 'Please check the profile link.'}
         </p>
       </div>
     );
@@ -229,9 +232,9 @@ export const ProfilePage: React.FC = () => {
   const { primaryColor = '#e056fd' } = data || {};
   const targetUserId = String(user.id || user.ID || user._id || '');
 
+  // التحقق من الصلاحية: فقط إذا كان التوكين موجود والمستخدم صاحب الحساب
   const isOwner = Boolean(
     token && currentUser && (
-      !targetUsername ||
       (currentUser.id && String(currentUser.id) === targetUserId) ||
       (currentUser.ID && String(currentUser.ID) === targetUserId) ||
       (currentUser.username && targetUsername && currentUser.username.toLowerCase() === targetUsername.toLowerCase()) ||

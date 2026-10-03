@@ -18,8 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// DB متغير قاعدة البيانات العام
-var DB *gorm.DB
+
 
 // User Model المحدث ليدعم حقول اليوتيوبر والمستثمر
 type User struct {
@@ -50,26 +49,6 @@ type Claims struct {
 	UserID uint   `json:"userId"`
 	Email  string `json:"email"`
 	jwt.RegisteredClaims
-}
-
-// InitDB تهيئة قاعدة البيانات والتهجير الآلي
-func InitDB() {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		log.Fatal("DATABASE_URL environment variable is not set")
-	}
-
-	var err error
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
-
-	if err := DB.AutoMigrate(&User{}); err != nil {
-		log.Fatalf("Failed to migrate database: %v", err)
-	}
-
-	log.Println("Database connection established & schema migrated successfully.")
 }
 
 // Helper to generate JWT Token
