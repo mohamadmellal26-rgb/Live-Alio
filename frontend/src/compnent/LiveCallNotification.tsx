@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Video, X, Check, User, ShieldCheck } from 'lucide-react';
+import { Video, X, Check, User } from 'lucide-react';
 import './LiveCallNotification.css';
 
 export interface CallRequestData {
