@@ -2,7 +2,6 @@ package main
 
 import (
     "encoding/json"
-    "fmt"
     "log"
     "sync"
 
@@ -66,7 +65,6 @@ func (nc *NotificationClient) Close() {
 
 // NotificationHub إدارة كافة اتصالات الإشعارات الفورية
 type NotificationHub struct {
-    // خريطة تربط userId بـ خريطة اتصالات (لتدعم فتح أكثر من تبويب أو جهاز لنفس المستخدم)
     userConnections map[string]map[string]*NotificationClient
     mu              sync.Mutex
 }
@@ -147,7 +145,6 @@ func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient
 
         sent := nh.SendToUser(notif.ToUserID, payload)
         if !sent {
-            // إشعار المرسل بأن المستخدم المستهدف غير متصل حالياً
             ack, _ := json.Marshal(map[string]interface{}{
                 "type":     "pitch_error",
                 "message":  "المستخدم غير متصل حالياً",
@@ -172,10 +169,8 @@ func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient
             "roomId":         roomID,
         })
 
-        // إعادة النتيجة إلى الطالب الأصلي للاتصال
         nh.SendToUser(notif.ToUserID, payload)
 
-        // في حال القبول، يتم تزويد القابل بنفس الـ roomId للدخول الفوري للغرفة
         if notif.Accepted {
             selfPayload, _ := json.Marshal(map[string]interface{}{
                 "type":     "pitch_result",
@@ -203,7 +198,6 @@ func SetupNotificationRoutes(app *fiber.App) {
             if tokenStr != "" {
                 claims, err := parseToken(tokenStr)
                 if err == nil {
-                    // تم التعديل للتحقق من النص الفارغ بدلاً من الصفر (claims.UserID != "")
                     if claims.UserID != "" {
                         c.Locals("userId", claims.UserID)
                     }
@@ -251,7 +245,6 @@ func SetupNotificationRoutes(app *fiber.App) {
 
         notifHub.Register(client)
 
-        // الـ Goroutine المخصصة للكتابة على الـ WebSocket
         go func() {
             for msg := range client.sendChan {
                 if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -266,7 +259,6 @@ func SetupNotificationRoutes(app *fiber.App) {
             c.Close()
         }()
 
-        // الحلقة الرئيسية لقراءة الرسائل الواردة
         for {
             _, message, err := c.ReadMessage()
             if err != nil {
