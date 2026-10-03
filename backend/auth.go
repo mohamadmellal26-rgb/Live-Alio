@@ -251,34 +251,40 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 
 // Get Public User Profile by ID or Username (Public Endpoint)
 func handleGetUserByID(c *fiber.Ctx) error {
-    identifier := c.Params("id")
-    if identifier == "" {
-        identifier = c.Params("username")
-    }
+	identifier := c.Params("id")
+	if identifier == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "لم يتم تقديم معرّف أو بريد إلكتروني",
+		})
+	}
 
-    if strings.TrimSpace(identifier) == "" {
-        return c.Status(400).JSON(fiber.Map{"error": "User ID or Username is required"})
-    }
+	var user User
+	var err error
 
-    var user User
-    var err error
+	// 1. إذا كان المدخل رقماً، ابحث بالـ ID فقط
+	if id, parseErr := strconv.Atoi(identifier); parseErr == nil {
+		err = DB.Where("id = ?", id).First(&user).Error
+	} else {
+		// 2. إذا لم يكن رقماً، ابحث بالإيميل فقط
+		err = DB.Where("LOWER(email) = ?", strings.ToLower(identifier)).First(&user).Error
+	}
 
-    // الفصل الصريح بين البحث بـ ID الرقمي أو بالبريد الإلكتروني لمنع السقوط الحسابي لـ GORM
-    if idNum, parseErr := strconv.Atoi(identifier); parseErr == nil {
-        err = DB.Where("id = ?", idNum).First(&user).Error
-    } else {
-        err = DB.Where("LOWER(email) = ?", strings.ToLower(identifier)).First(&user).Error
-    }
+	// 3. إذا فشل العثور على المستخدم (غير موجود)، أرجع خطأ مباشرة ولا ترجع للبروفايل الشخصي
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "فشل الوصول: المستخدم غير موجود",
+		})
+	}
 
-    if err != nil {
-        return c.Status(404).JSON(fiber.Map{"error": "User not found"})
-    }
-
-    user.Password = "" // إخفاء كلمة المرور للعامة
-
-    return c.JSON(fiber.Map{
-        "user": user,
-    })
+	// 4. في حال النجاح فقط، قم بإرجاع بيانات البروفايل
+	return c.JSON(fiber.Map{
+		"id":         user.ID,
+		"fullName":   user.FullName,
+		"email":      user.Email,
+		"avatarUrl":  user.AvatarURL,
+		"bio":        user.Bio,
+		"createdAt":  user.CreatedAt,
+	})
 }
 
 // Update User Profile Handler المحدث
