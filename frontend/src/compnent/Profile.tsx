@@ -20,13 +20,13 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { useUserProfile } from './hooks/useUserProfile';
-import LiveCallNotification, { type CallRequestData } from './LiveCallNotification';
+import LiveCallNotification from './LiveCallNotification';
 import { EditProfileModal } from './EditProfileModal';
 import './Profile.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
 
-interface ContentItem {
+export interface ContentItem {
   id: string;
   title: string;
   description?: string;
@@ -38,16 +38,22 @@ interface ContentItem {
   createdAt?: string;
 }
 
+export interface CallRequestData {
+  id: string;
+  callerName: string;
+  callerRole?: string;
+  callerAvatarUrl?: string;
+  note?: string;
+}
+
 export const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
-  // التقاط البرامتر سواء كان id أو username
   const params = useParams<{ username?: string; id?: string }>();
   const pathIdentifier = params.username || params.id;
 
   const [searchParams] = useSearchParams();
   const queryUsername = searchParams.get('user') || searchParams.get('profile') || searchParams.get('identifier');
 
-  // قراءة بيانات الجلسة الحالية أولاً لنتمكن من استخدامها كقيمة افتراضية إذا لم يوجد معرف في الرابط
   const [currentUser, setCurrentUser] = useState<any>(() => {
     const storedUserRaw = localStorage.getItem('user');
     if (storedUserRaw) {
@@ -61,25 +67,24 @@ export const ProfilePage: React.FC = () => {
     return null;
   });
 
-  // إذا لم يتم تمرير أي معرف في الرابط وكانت صفحة البروفايل الشخصي (/profile)، نلجأ لمعرف المستخدم الحالي لجلب بروفايله الخاص صحيحاً
   const targetIdentifierRaw = pathIdentifier || queryUsername;
-  const targetUsername = targetIdentifierRaw || (window.location.pathname === '/profile' && (currentUser?.username || currentUser?.id || currentUser?.ID) ? String(currentUser.username || currentUser.id || currentUser.ID) : undefined);
+  const targetUsername = targetIdentifierRaw || (
+    window.location.pathname === '/profile' && (currentUser?.username || currentUser?.id || currentUser?.ID) 
+      ? String(currentUser.username || currentUser.id || currentUser.ID) 
+      : undefined
+  );
 
   const { data, isLoading, error, refetch } = useUserProfile(targetUsername) as any;
 
-  // حالة محلية للبروفايل لضمان التحديث الفوري للواجهة
   const [localProfile, setLocalProfile] = useState<any>(null);
-
   const [imgError, setImgError] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showAddContentModal, setShowAddContentModal] = useState(false);
 
-  // حالات إدارة وتفاصيل المحتوى المضاف
   const [contentList, setContentList] = useState<ContentItem[]>([]);
   const [selectedMedia, setSelectedMedia] = useState<ContentItem | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  // نمذجة بيانات إضافة محتوى جديد
   const [newContent, setNewContent] = useState({
     title: '',
     description: '',
@@ -89,7 +94,6 @@ export const ProfilePage: React.FC = () => {
     thumbnailFile: null as File | null
   });
 
-  // حالات الاتصال المباشر والـ WebSockets
   const [isCalling, setIsCalling] = useState(false);
   const [incomingCall, setIncomingCall] = useState<CallRequestData | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -108,7 +112,6 @@ export const ProfilePage: React.FC = () => {
     }
   }, []);
 
-  // دالة بناء رابط الصورة أو الوسائط الكامل
   const getFullImageUrl = useCallback((path?: string) => {
     if (!path || typeof path !== 'string') return '';
     if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
@@ -119,7 +122,6 @@ export const ProfilePage: React.FC = () => {
     return `${cleanBase}/${cleanPath}`;
   }, []);
 
-  // مزامنة الـ Data القادمة من الـ API مع الـ Local State
   useEffect(() => {
     if (data) {
       const extractedUser = data.user || data.profile || data.data || data;
@@ -127,19 +129,16 @@ export const ProfilePage: React.FC = () => {
     }
   }, [data]);
 
-  // استخدام localProfile لضمان سرعة الاستجابة
   const user = localProfile;
 
-  // مزامنة المحتوى المستلم من الـ API
   useEffect(() => {
     if (data?.contents) {
       setContentList(data.contents);
-    } else if ((data as any)?.profile?.contents) {
-      setContentList((data as any).profile.contents);
+    } else if (data?.profile?.contents) {
+      setContentList(data.profile.contents);
     }
   }, [data]);
 
-  // فحص حقول صورة البروفايل
   const avatarPath = 
     user?.avatar || 
     user?.Avatar || 
@@ -152,7 +151,6 @@ export const ProfilePage: React.FC = () => {
     setImgError(false);
   }, [avatarSrc, targetUsername]);
 
-  // إقامة اتصال WebSocket
   useEffect(() => {
     if (!token) return;
 
@@ -231,14 +229,13 @@ export const ProfilePage: React.FC = () => {
   const { primaryColor = '#e056fd' } = data || {};
   const targetUserId = String(user.id || user.ID || user._id || '');
 
-  // التحقق الفعّال مما إذا كان المستخدم الحالي هو مالك البروفايل المعروض
   const isOwner = Boolean(
     token && currentUser && (
-      !targetUsername || // زيارة /profile المباشرة
+      !targetUsername ||
       (currentUser.id && String(currentUser.id) === targetUserId) ||
       (currentUser.ID && String(currentUser.ID) === targetUserId) ||
       (currentUser.username && targetUsername && currentUser.username.toLowerCase() === targetUsername.toLowerCase()) ||
-      (currentUser.email && user.email && currentUser.email.toLowerCase() === user.email.toLowerCase())
+      (currentUser.email && (user.email || user.Email) && (currentUser.email.toLowerCase() === (user.email || user.Email).toLowerCase()))
     )
   );
 
@@ -290,7 +287,6 @@ export const ProfilePage: React.FC = () => {
     setIncomingCall(null);
   };
 
-  // دالة رفع المحتوى
   const handleUploadContent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newContent.title.trim()) {
@@ -446,7 +442,7 @@ export const ProfilePage: React.FC = () => {
           <div className="profile-bio-box">
             {(user.bio || user.Bio) && <p className="profile-bio-text">{user.bio || user.Bio}</p>}
             <div className="profile-meta-row">
-              {user.email && isOwner && <div className="meta-item"><Mail size={15} /> {user.email}</div>}
+              {(user.email || user.Email) && isOwner && <div className="meta-item"><Mail size={15} /> {user.email || user.Email}</div>}
               {(user.location || user.Location) && <div className="meta-item"><MapPin size={15} /> {user.location || user.Location}</div>}
               {(user.website || user.Website) && (
                 <div className="meta-item">
@@ -460,7 +456,6 @@ export const ProfilePage: React.FC = () => {
       </div>
 
       <div className="profile-main-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '1.5rem', marginTop: '1.5rem' }}>
-        {/* قسم المحتوى والمعرض */}
         <main className="profile-content-section">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h3 style={{ color: '#fff', margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -514,7 +509,6 @@ export const ProfilePage: React.FC = () => {
           )}
         </main>
 
-        {/* الشريط الجانبي */}
         <aside style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {(user.targetIndustry || user.TargetIndustry) && (
             <div className="dark-card" style={{ background: '#18181c', padding: '1.25rem', borderRadius: '12px', border: '1px solid #27272a' }}>
@@ -553,7 +547,6 @@ export const ProfilePage: React.FC = () => {
         </aside>
       </div>
 
-      {/* Modal تفاصيل المحتوى */}
       {selectedMedia && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '1rem' }}>
           <div style={{ background: '#18181c', borderRadius: '12px', width: '100%', maxWidth: '800px', overflow: 'hidden', border: '1px solid #27272a', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
@@ -610,7 +603,6 @@ export const ProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal إضافة محتوى جديد (يظهر فقط لمالك البروفايل) */}
       {isOwner && showAddContentModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '1rem' }}>
           <div style={{ background: '#1e1e24', padding: '1.5rem', borderRadius: '12px', width: '100%', maxWidth: '520px', border: '1px solid #333' }}>
@@ -703,7 +695,6 @@ export const ProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal تعديل البروفايل المنفصل (يظهر فقط لمالك البروفايل) */}
       {isOwner && (
         <EditProfileModal 
           isOpen={isEditing}

@@ -10,9 +10,16 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
+
+// DB متغير قاعدة البيانات العام
+var DB *gorm.DB
 
 // User Model المحدث ليدعم حقول اليوتيوبر والمستثمر
 type User struct {
@@ -43,6 +50,26 @@ type Claims struct {
 	UserID uint   `json:"userId"`
 	Email  string `json:"email"`
 	jwt.RegisteredClaims
+}
+
+// InitDB تهيئة قاعدة البيانات والتهجير الآلي
+func InitDB() {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL environment variable is not set")
+	}
+
+	var err error
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	if err := DB.AutoMigrate(&User{}); err != nil {
+		log.Fatalf("Failed to migrate database: %v", err)
+	}
+
+	log.Println("Database connection established & schema migrated successfully.")
 }
 
 // Helper to generate JWT Token
@@ -85,7 +112,6 @@ func parseToken(tokenStr string) (*Claims, error) {
 func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	file, err := c.FormFile(fieldName)
 	if err != nil {
-		// إذا لم يقم المستخدم برفعه، نعتبره اختيارياً ولا نوقف التنفيذ
 		return "", nil
 	}
 
@@ -166,7 +192,6 @@ func handleSignup(c *fiber.Ctx) error {
 		PyCardId:   pyCardId,
 	}
 
-	// محاولة حفظ الملفات فقط إذا لم يكن الطلب بصيغة JSON البسيطة
 	if !strings.Contains(contentType, "application/json") {
 		if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
 			newUser.Avatar = avatarPath
@@ -392,4 +417,54 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		"message": "Profile updated successfully",
 		"user":    user,
 	})
+}
+
+func main() {
+	_ = os.MkdirAll("./uploads", os.ModePerm)
+
+	// تهيئة اتصال قاعدة البيانات
+	InitDB()
+
+	app := fiber.New(fiber.Config{
+		AppName:   "Live-Aleo API",
+		BodyLimit: 50 * 1024 * 1024,
+	})
+
+	app.Use(logger.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
+	}))
+
+	app.Static("/uploads", "./uploads")
+
+	// نقطة فحص الصحة للسيرفر تجنباً لأخطاء 404
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.Status(200).JSON(fiber.Map{
+			"status":  "online",
+			"message": "Live-Aleo API is running",
+		})
+	})
+
+	setupRoutes := func(router fiber.Router) {
+		router.Post("/signup", handleSignup)
+		router.Post("/login", handleLogin)
+		router.Get("/user/profile", handleGetUserProfile)
+		router.Get("/user/:id", handleGetUserByID)
+		router.Put("/user/profile", handleUpdateUserProfile)
+	}
+
+	setupRoutes(app.Group("/api"))
+	setupRoutes(app.Group("/api/v1"))
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Server running on port :%s", port)
+	if err := app.Listen(":" + port); err != nil {
+		log.Fatalf("Error starting server: %v", err)
+	}
 }
