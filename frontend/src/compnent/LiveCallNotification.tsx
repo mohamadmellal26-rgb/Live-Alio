@@ -11,7 +11,6 @@ export interface CallRequestData {
 }
 
 interface LiveCallNotificationProps {
-  /** تمرير طلب اتصال لتجربة المكون فوراً أو ربطه بـ WebSockets */
   request?: CallRequestData | null;
   onAccept?: (requestId: string) => void;
   onDecline?: (requestId: string) => void;
@@ -25,11 +24,14 @@ export const LiveCallNotification: React.FC<LiveCallNotificationProps> = ({
   const [activeRequest, setActiveRequest] = useState<CallRequestData | null>(null);
   const [isVisible, setIsVisible] = useState(false);
 
-  // إظهار الإشعار عند وصول طلب جديد
+  // إظهار أو إخفاء الإشعار فور تغير الخاصية propRequest
   useEffect(() => {
     if (propRequest) {
       setActiveRequest(propRequest);
       setIsVisible(true);
+    } else {
+      setIsVisible(false);
+      setActiveRequest(null);
     }
   }, [propRequest]);
 

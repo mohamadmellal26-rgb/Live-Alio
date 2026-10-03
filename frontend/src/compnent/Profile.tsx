@@ -71,7 +71,7 @@ export const ProfilePage: React.FC = () => {
         if (message.type === 'incoming_call_request') {
           setIncomingCall({
             id: message.callId,
-            callerName: message.callerName,
+            callerName: message.callerName || 'Unknown User',
             callerRole: message.callerRole,
             callerAvatarUrl: message.callerAvatarUrl,
             note: message.note || 'مرحباً، يرغب هذا المستخدم بالاتصال بك مباشرة!'
@@ -85,6 +85,7 @@ export const ProfilePage: React.FC = () => {
             state: { 
               autoConnectPeerId: message.peerId, 
               activeCallId: message.callId,
+              roomId: message.callId,
               peerName: message.peerName || 'Partner' 
             } 
           });
@@ -93,7 +94,7 @@ export const ProfilePage: React.FC = () => {
         // عند رفض الطرف الآخر للاتصال
         if (message.type === 'call_declined') {
           setIsCalling(false);
-          alert('تم رفض طلب الاتصال من قبل المستلم.');
+          alert(message.message || 'تم رفض طلب الاتصال من قبل المستلم.');
         }
       } catch (err) {
         console.error('Error parsing WS message in Profile:', err);
@@ -154,11 +155,17 @@ export const ProfilePage: React.FC = () => {
       return;
     }
 
+    const targetId = String(user.id || (user as any)._id || '');
+    if (!targetId) {
+      alert('عذراً، تعذر تحديد معرف المستخدم المستهدف.');
+      return;
+    }
+
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       setIsCalling(true);
       wsRef.current.send(JSON.stringify({
         type: 'send_call_request',
-        targetUserId: user.id || (user as any)._id,
+        targetUserId: targetId,
         callerName: currentUser?.fullName || currentUser?.username || 'مستخدم',
         callerRole: currentUser?.role || 'User',
         callerAvatarUrl: currentUser?.avatarUrl
@@ -178,7 +185,7 @@ export const ProfilePage: React.FC = () => {
     }
     const callerName = incomingCall?.callerName || 'Partner';
     setIncomingCall(null);
-    navigate('/dashboard', { state: { activeCallId: requestId, peerName: callerName } });
+    navigate('/dashboard', { state: { roomId: requestId, activeCallId: requestId, peerName: callerName } });
   };
 
   // رفض اتصال وارد

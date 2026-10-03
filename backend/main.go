@@ -113,6 +113,89 @@ func (h *Hub) RegisterClient(client *Client) {
 	h.mu.Unlock()
 }
 
+func (h *Hub) HandleSendCallRequest(caller *Client, sig SignalMessage) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	targetUserID := sig.TargetUserID
+	callID := uuid.New().String()
+
+	var targetClient *Client
+	for _, c := range h.clients {
+		if c.UserID == targetUserID {
+			targetClient = c
+			break
+		}
+	}
+
+	if targetClient == nil {
+		resp, _ := json.Marshal(map[string]interface{}{
+			"type":    "call_declined",
+			"message": "User is currently offline.",
+		})
+		caller.SafeWrite(resp)
+		return
+	}
+
+	h.pendingCalls[callID] = &CallRequest{
+		ID:           callID,
+		Caller:       caller,
+		TargetUserID: targetUserID,
+	}
+
+	reqMsg, _ := json.Marshal(map[string]interface{}{
+		"type":            "incoming_call_request",
+		"callId":          callID,
+		"callerId":        caller.ID,
+		"callerName":      sig.CallerName,
+		"callerRole":      sig.CallerRole,
+		"callerAvatarUrl": sig.CallerAvatarUrl,
+		"note":            sig.Note,
+	})
+	targetClient.SafeWrite(reqMsg)
+}
+
+func (h *Hub) HandleAcceptCallRequest(receiver *Client, sig SignalMessage) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	callID := sig.CallID
+	callReq, exists := h.pendingCalls[callID]
+	if !exists {
+		return
+	}
+
+	delete(h.pendingCalls, callID)
+
+	msgCaller, _ := json.Marshal(map[string]interface{}{
+		"type":     "call_accepted",
+		"callId":   callID,
+		"peerId":   receiver.ID,
+		"peerName": receiver.FullName,
+	})
+	callReq.Caller.SafeWrite(msgCaller)
+}
+
+func (h *Hub) HandleDeclineCallRequest(receiver *Client, sig SignalMessage) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	callID := sig.CallID
+	callReq, exists := h.pendingCalls[callID]
+	if !exists {
+		return
+	}
+
+	delete(h.pendingCalls, callID)
+
+	msgCaller, _ := json.Marshal(map[string]interface{}{
+		"type":    "call_declined",
+		"callId":  callID,
+		"message": "Call was declined.",
+	})
+	callReq.Caller.SafeWrite(msgCaller)
+}
+
 // HandleInitDirectCall لربط الطرفين القادمين من إشعار القبول عبر roomId مشترك
 func (h *Hub) HandleInitDirectCall(client *Client, sig SignalMessage) {
 	h.mu.Lock()
@@ -404,17 +487,23 @@ func main() {
 
 			var sig SignalMessage
 			if err := json.Unmarshal(message, &sig); err == nil {
-				if sig.Type == "init_direct_call" {
+				switch sig.Type {
+				case "send_call_request":
+					hub.HandleSendCallRequest(client, sig)
+					continue
+				case "accept_call_request":
+					hub.HandleAcceptCallRequest(client, sig)
+					continue
+				case "decline_call_request":
+					hub.HandleDeclineCallRequest(client, sig)
+					continue
+				case "init_direct_call":
 					hub.HandleInitDirectCall(client, sig)
 					continue
-				}
-
-				if sig.Type == "find_match" {
+				case "find_match":
 					hub.FindMatchForClient(client)
 					continue
-				}
-
-				if sig.Type == "leave" {
+				case "leave":
 					hub.mu.Lock()
 					if client.Peer != nil {
 						peer := client.Peer
