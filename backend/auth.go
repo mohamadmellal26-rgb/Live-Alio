@@ -85,7 +85,8 @@ func parseToken(tokenStr string) (*Claims, error) {
 func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	file, err := c.FormFile(fieldName)
 	if err != nil {
-		return "", err
+		// إذا لم يقم المستخدم برفعه، نعتبره اختيارياً ولا نوقف التنفيذ
+		return "", nil 
 	}
 
 	uploadDir := "./uploads"
@@ -165,19 +166,19 @@ func handleSignup(c *fiber.Ctx) error {
 		PyCardId:   pyCardId,
 	}
 
-	// حفظ الصورة الشخصية إن وجدت
+	// حفظ الصورة الشخصية بشكل آمن (إن وجدت) دون إيقاف التسجيل في حال الخطأ
 	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
 		newUser.Avatar = avatarPath
 	}
 
-	// حفظ ملف إثبات المشروع (خاص بالمستثمر) إن وجد
+	// حفظ ملف إثبات المشروع (خاص بالمستثمر) بشكل آمن
 	if proofPath, err := saveUploadedFile(c, "projectProof"); err == nil && proofPath != "" {
 		newUser.ProjectProof = proofPath
 	}
 
 	if err := DB.Create(&newUser).Error; err != nil {
 		log.Printf("Signup Error: %v", err)
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to create user"})
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to create user in database: " + err.Error()})
 	}
 
 	token, err := generateToken(newUser)
