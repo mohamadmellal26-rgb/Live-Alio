@@ -94,7 +94,7 @@ const AppContent: React.FC = () => {
 
           navigate('/Dashboard', { 
             state: { 
-              roomId: message.callId, 
+              roomId: message.callId,
               activeCallId: message.callId,
               peerName: message.peerName || 'Partner' 
             } 

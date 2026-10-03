@@ -47,7 +47,24 @@ export const ProfilePage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const queryUsername = searchParams.get('user') || searchParams.get('profile') || searchParams.get('identifier');
 
-  const targetUsername = pathIdentifier || queryUsername || undefined;
+  // قراءة بيانات الجلسة الحالية أولاً لنتمكن من استخدامها كقيمة افتراضية إذا لم يوجد معرف في الرابط
+  const [currentUser, setCurrentUser] = useState<any>(() => {
+    const storedUserRaw = localStorage.getItem('user');
+    if (storedUserRaw) {
+      try {
+        return JSON.parse(storedUserRaw);
+      } catch (e) {
+        console.error('Failed to parse user session:', e);
+        return null;
+      }
+    }
+    return null;
+  });
+
+  // إذا لم يتم تمرير أي معرف في الرابط وكانت صفحة البروفايل الشخصي (/profile)، نلجأ لمعرف المستخدم الحالي لجلب بروفايله الخاص صحيحاً
+  const targetIdentifierRaw = pathIdentifier || queryUsername;
+  const targetUsername = targetIdentifierRaw || (window.location.pathname === '/profile' && (currentUser?.username || currentUser?.id || currentUser?.ID) ? String(currentUser.username || currentUser.id || currentUser.ID) : undefined);
+
   const { data, isLoading, error, refetch } = useUserProfile(targetUsername) as any;
 
   // حالة محلية للبروفايل لضمان التحديث الفوري للواجهة
@@ -77,8 +94,6 @@ export const ProfilePage: React.FC = () => {
   const [incomingCall, setIncomingCall] = useState<CallRequestData | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // قراءة بيانات الجلسة الحالية
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const token = localStorage.getItem('token');
 
   useEffect(() => {
@@ -207,7 +222,7 @@ export const ProfilePage: React.FC = () => {
         <ShieldCheck size={48} />
         <h2>Profile Not Found</h2>
         <p style={{ color: '#a1a1aa' }}>
-          {targetUsername ? `User "${targetUsername}" does not exist or profile is private.` : 'Please sign in to view your profile dashboard.'}
+          {targetUsername ? `User "${targetUsername}" does not exist or profile is private.` : 'Please check the profile link or sign in.'}
         </p>
       </div>
     );
@@ -216,7 +231,7 @@ export const ProfilePage: React.FC = () => {
   const { primaryColor = '#e056fd' } = data || {};
   const targetUserId = String(user.id || user.ID || user._id || '');
 
-  // التحقق الفعّال مما إذا كان المستخدم هو مالك البروفايل
+  // التحقق الفعّال مما إذا كان المستخدم الحالي هو مالك البروفايل المعروض
   const isOwner = Boolean(
     token && currentUser && (
       !targetUsername || // زيارة /profile المباشرة
@@ -230,6 +245,7 @@ export const ProfilePage: React.FC = () => {
   const handleConnectClick = () => {
     if (!token) {
       alert('يرجى تسجيل الدخول أولاً للاتصال بالمستخدم.');
+      navigate('/login');
       return;
     }
 
@@ -385,7 +401,13 @@ export const ProfilePage: React.FC = () => {
             </div>
 
             <div className="profile-actions" style={{ display: 'flex', gap: '0.75rem' }}>
-              <button className="btn-secondary-action">
+              <button 
+                className="btn-secondary-action" 
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                  alert('تم نسخ رابط البروفايل بنجاح!');
+                }}
+              >
                 <Share2 size={16} /> Share
               </button>
 
@@ -424,7 +446,7 @@ export const ProfilePage: React.FC = () => {
           <div className="profile-bio-box">
             {(user.bio || user.Bio) && <p className="profile-bio-text">{user.bio || user.Bio}</p>}
             <div className="profile-meta-row">
-              {user.email && <div className="meta-item"><Mail size={15} /> {user.email}</div>}
+              {user.email && isOwner && <div className="meta-item"><Mail size={15} /> {user.email}</div>}
               {(user.location || user.Location) && <div className="meta-item"><MapPin size={15} /> {user.location || user.Location}</div>}
               {(user.website || user.Website) && (
                 <div className="meta-item">
@@ -588,8 +610,8 @@ export const ProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal إضافة محتوى جديد */}
-      {showAddContentModal && (
+      {/* Modal إضافة محتوى جديد (يظهر فقط لمالك البروفايل) */}
+      {isOwner && showAddContentModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '1rem' }}>
           <div style={{ background: '#1e1e24', padding: '1.5rem', borderRadius: '12px', width: '100%', maxWidth: '520px', border: '1px solid #333' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
@@ -681,20 +703,22 @@ export const ProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal تعديل البروفايل المنفصل */}
-      <EditProfileModal 
-        isOpen={isEditing}
-        onClose={() => setIsEditing(false)}
-        user={user}
-        token={token}
-        apiBaseUrl={API_BASE_URL}
-        primaryColor={primaryColor}
-        avatarSrc={avatarSrc}
-        currentUser={currentUser}
-        setCurrentUser={setCurrentUser}
-        setLocalProfile={setLocalProfile}
-        refetch={refetch}
-      />
+      {/* Modal تعديل البروفايل المنفصل (يظهر فقط لمالك البروفايل) */}
+      {isOwner && (
+        <EditProfileModal 
+          isOpen={isEditing}
+          onClose={() => setIsEditing(false)}
+          user={user}
+          token={token}
+          apiBaseUrl={API_BASE_URL}
+          primaryColor={primaryColor}
+          avatarSrc={avatarSrc}
+          currentUser={currentUser}
+          setCurrentUser={setCurrentUser}
+          setLocalProfile={setLocalProfile}
+          refetch={refetch}
+        />
+      )}
     </div>
   );
 };

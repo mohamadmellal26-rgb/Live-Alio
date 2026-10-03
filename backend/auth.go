@@ -16,23 +16,23 @@ import (
 
 // User Model المحدث ليدعم حقول اليوتيوبر والمستثمر
 type User struct {
-	ID             uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-	FullName       string         `json:"fullName"`
-	Email          string         `json:"email" gorm:"unique;index"`
-	Password       string         `json:"-"`
-	Role           string         `json:"role"`
-	Avatar         string         `json:"avatar"`
-	Bio            string         `json:"bio"`
-	Location       string         `json:"location"`
-	Website        string         `json:"website"`
-	TargetIndustry string         `json:"targetIndustry"`
-	YoutubeUrl     string         `json:"youtubeUrl"`   // خاص بدور Youtuber
-	PyCardId       string         `json:"pyCardId"`     // خاص بدور Investor
-	ProjectProof   string         `json:"projectProof"` // مسار ملف إثبات المشروع (PDF) للمستثمر
-	Skills         []string       `json:"skills" gorm:"serializer:json"`
-	FocusAreas     []string       `json:"focusAreas" gorm:"serializer:json"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
+	ID             uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	FullName       string    `json:"fullName"`
+	Email          string    `json:"email" gorm:"unique;index"`
+	Password       string    `json:"-"`
+	Role           string    `json:"role"`
+	Avatar         string    `json:"avatar"`
+	Bio            string    `json:"bio"`
+	Location       string    `json:"location"`
+	Website        string    `json:"website"`
+	TargetIndustry string    `json:"targetIndustry"`
+	YoutubeUrl     string    `json:"youtubeUrl"`   // خاص بدور Youtuber
+	PyCardId       string    `json:"pyCardId"`     // خاص بدور Investor
+	ProjectProof   string    `json:"projectProof"` // مسار ملف إثبات المشروع (PDF) للمستثمر
+	Skills         []string  `json:"skills" gorm:"serializer:json"`
+	FocusAreas     []string  `json:"focusAreas" gorm:"serializer:json"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // JWT Secret Key
@@ -86,7 +86,7 @@ func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	file, err := c.FormFile(fieldName)
 	if err != nil {
 		// إذا لم يقم المستخدم برفعه، نعتبره اختيارياً ولا نوقف التنفيذ
-		return "", nil 
+		return "", nil
 	}
 
 	uploadDir := "./uploads"
@@ -104,7 +104,6 @@ func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	return fmt.Sprintf("/uploads/%s", filename), nil
 }
 
-// Signup Handler المحدث
 // Signup Handler المحدث
 func handleSignup(c *fiber.Ctx) error {
 	contentType := c.Get("Content-Type")
@@ -231,7 +230,7 @@ func handleLogin(c *fiber.Ctx) error {
 	})
 }
 
-// Get Current User Profile Handler
+// Get Current User Profile Handler (Private)
 func handleGetUserProfile(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -248,6 +247,23 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 	if err := DB.Where("id = ?", claims.UserID).First(&user).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "User not found"})
 	}
+
+	return c.JSON(user)
+}
+
+// Get Public User Profile by ID (Public Endpoint)
+func handleGetUserByID(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "User ID is required"})
+	}
+
+	var user User
+	if err := DB.Where("id = ?", id).First(&user).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "User not found"})
+	}
+
+	user.Password = "" // إخفاء كلمة المرور للعامة
 
 	return c.JSON(user)
 }
@@ -288,26 +304,62 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 
 		var jsonReq UpdateProfileJSON
 		if err := c.BodyParser(&jsonReq); err == nil {
-			if jsonReq.FullName != "" { user.FullName = jsonReq.FullName }
-			if jsonReq.Role != "" { user.Role = jsonReq.Role }
-			if jsonReq.Bio != "" { user.Bio = jsonReq.Bio }
-			if jsonReq.Location != "" { user.Location = jsonReq.Location }
-			if jsonReq.Website != "" { user.Website = jsonReq.Website }
-			if jsonReq.TargetIndustry != "" { user.TargetIndustry = jsonReq.TargetIndustry }
-			if jsonReq.YoutubeUrl != "" { user.YoutubeUrl = jsonReq.YoutubeUrl }
-			if jsonReq.PyCardId != "" { user.PyCardId = jsonReq.PyCardId }
-			if len(jsonReq.Skills) > 0 { user.Skills = jsonReq.Skills }
-			if len(jsonReq.FocusAreas) > 0 { user.FocusAreas = jsonReq.FocusAreas }
+			if jsonReq.FullName != "" {
+				user.FullName = jsonReq.FullName
+			}
+			if jsonReq.Role != "" {
+				user.Role = jsonReq.Role
+			}
+			if jsonReq.Bio != "" {
+				user.Bio = jsonReq.Bio
+			}
+			if jsonReq.Location != "" {
+				user.Location = jsonReq.Location
+			}
+			if jsonReq.Website != "" {
+				user.Website = jsonReq.Website
+			}
+			if jsonReq.TargetIndustry != "" {
+				user.TargetIndustry = jsonReq.TargetIndustry
+			}
+			if jsonReq.YoutubeUrl != "" {
+				user.YoutubeUrl = jsonReq.YoutubeUrl
+			}
+			if jsonReq.PyCardId != "" {
+				user.PyCardId = jsonReq.PyCardId
+			}
+			if len(jsonReq.Skills) > 0 {
+				user.Skills = jsonReq.Skills
+			}
+			if len(jsonReq.FocusAreas) > 0 {
+				user.FocusAreas = jsonReq.FocusAreas
+			}
 		}
 	} else {
-		if fullName := c.FormValue("fullName"); fullName != "" { user.FullName = fullName }
-		if role := c.FormValue("role"); role != "" { user.Role = role }
-		if bio := c.FormValue("bio"); bio != "" { user.Bio = bio }
-		if location := c.FormValue("location"); location != "" { user.Location = location }
-		if website := c.FormValue("website"); website != "" { user.Website = website }
-		if targetIndustry := c.FormValue("targetIndustry"); targetIndustry != "" { user.TargetIndustry = targetIndustry }
-		if youtubeUrl := c.FormValue("youtubeUrl"); youtubeUrl != "" { user.YoutubeUrl = youtubeUrl }
-		if pyCardId := c.FormValue("pyCardId"); pyCardId != "" { user.PyCardId = pyCardId }
+		if fullName := c.FormValue("fullName"); fullName != "" {
+			user.FullName = fullName
+		}
+		if role := c.FormValue("role"); role != "" {
+			user.Role = role
+		}
+		if bio := c.FormValue("bio"); bio != "" {
+			user.Bio = bio
+		}
+		if location := c.FormValue("location"); location != "" {
+			user.Location = location
+		}
+		if website := c.FormValue("website"); website != "" {
+			user.Website = website
+		}
+		if targetIndustry := c.FormValue("targetIndustry"); targetIndustry != "" {
+			user.TargetIndustry = targetIndustry
+		}
+		if youtubeUrl := c.FormValue("youtubeUrl"); youtubeUrl != "" {
+			user.YoutubeUrl = youtubeUrl
+		}
+		if pyCardId := c.FormValue("pyCardId"); pyCardId != "" {
+			user.PyCardId = pyCardId
+		}
 
 		if skillsRaw := c.FormValue("skills"); skillsRaw != "" {
 			var parsedSkills []string

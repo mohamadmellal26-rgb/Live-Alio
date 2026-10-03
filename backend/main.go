@@ -456,7 +456,8 @@ func main() {
 	hub := newHub()
 
 	setupRoutes := func(router fiber.Router) {
-		router.Get("/user/profile", handleGetUserProfile)
+		router.Get("/user/profile", handleGetUserProfile) // للحساب الشخصي الحالي
+		router.Get("/user/:id", handleGetUserByID)         // لزيارة بروفايل أي شخص بالـ ID
 		router.Put("/user/profile", handleUpdateUserProfile)
 		router.Post("/signup", handleSignup)
 		router.Post("/login", handleLogin)
