@@ -10,20 +10,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// PitchNotification structure for direct call requests
+// PitchNotification هيكل بيانات طلبات الاتصال والإشعارات المباشرة
 type PitchNotification struct {
-	Type         string `json:"type"`                   // "pitch_request", "pitch_response", "pitch_cancel"
+	Type           string `json:"type"`                     // "pitch_request", "pitch_response", "pitch_cancel"
 	NotificationID string `json:"notificationId,omitempty"`
-	FromUserID   string `json:"fromUserId"`
-	FromUserName string `json:"fromUserName"`
-	FromAvatar   string `json:"fromAvatar,omitempty"`
-	ToUserID     string `json:"toUserId"`
-	Note         string `json:"note,omitempty"`         // Pitch summary or message
-	Accepted     bool   `json:"accepted,omitempty"`     // Response flag
-	RoomID       string `json:"roomId,omitempty"`       // Generated stream room id on acceptance
+	FromUserID     string `json:"fromUserId"`
+	FromUserName   string `json:"fromUserName"`
+	FromAvatar     string `json:"fromAvatar,omitempty"`
+	ToUserID       string `json:"toUserId"`
+	Note           string `json:"note,omitempty"`           // ملخص العرض أو الرسالة
+	Accepted       bool   `json:"accepted,omitempty"`       // حالة القبول أو الرفض
+	RoomID         string `json:"roomId,omitempty"`         // معرف الغرفة عند القبول
 }
 
-// NotificationClient represents a connected user listening for notifications
+// NotificationClient يمثل العميل المتصل المخصص لاستقبال الإشعارات
 type NotificationClient struct {
 	ID       string          `json:"id"`
 	UserID   string          `json:"userId"`
@@ -34,31 +34,38 @@ type NotificationClient struct {
 	mu       sync.Mutex
 }
 
+// SafeWrite لكتابة الرسائل بشكل آمن داخل القناة دون التسبب في panic
 func (nc *NotificationClient) SafeWrite(msg []byte) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
+
 	if nc.isClosed || nc.sendChan == nil {
 		return
 	}
+
 	select {
 	case nc.sendChan <- msg:
 	default:
-		log.Printf("Notification buffer full for user %s, dropping message", nc.UserID)
+		log.Printf("[NotifHub] Notification buffer full for user %s, dropping message", nc.UserID)
 	}
 }
 
+// Close لإغلاق الاتصال والقناة بأمان
 func (nc *NotificationClient) Close() {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
+
 	if !nc.isClosed {
 		nc.isClosed = true
-		close(nc.sendChan)
+		if nc.sendChan != nil {
+			close(nc.sendChan)
+		}
 	}
 }
 
-// NotificationHub manages connected users for real-time notifications
+// NotificationHub إدارة كافة اتصالات الإشعارات الفورية
 type NotificationHub struct {
-	// Map of userId -> map of connection IDs (supports multiple devices/tabs per user)
+	// خريطة تربط userId بـ خريطة اتصالات (لتدعم فتح أكثر من تبويب أو جهاز لنفس المستخدم)
 	userConnections map[string]map[string]*NotificationClient
 	mu              sync.Mutex
 }
@@ -67,6 +74,7 @@ var notifHub = &NotificationHub{
 	userConnections: make(map[string]map[string]*NotificationClient),
 }
 
+// Register تسجيل اتصال جديد للمستخدم
 func (nh *NotificationHub) Register(client *NotificationClient) {
 	nh.mu.Lock()
 	defer nh.mu.Unlock()
@@ -78,6 +86,7 @@ func (nh *NotificationHub) Register(client *NotificationClient) {
 	log.Printf("[NotifHub] User registered for notifications: %s (ConnID: %s)", client.UserID, client.ID)
 }
 
+// Unregister إلغاء تسجيل الاتصال عند انقطاعه
 func (nh *NotificationHub) Unregister(client *NotificationClient) {
 	nh.mu.Lock()
 	defer nh.mu.Unlock()
@@ -88,10 +97,10 @@ func (nh *NotificationHub) Unregister(client *NotificationClient) {
 			delete(nh.userConnections, client.UserID)
 		}
 	}
-	log.Printf("[NotifHub] User unregistered from notifications: %s", client.UserID)
+	log.Printf("[NotifHub] User unregistered from notifications: %s (ConnID: %s)", client.UserID, client.ID)
 }
 
-// SendToUser sends a notification message to all active connections of a specific user
+// SendToUser إرسال الإشعار لجميع الأجهزة والتبويبات النشطة للمستخدم
 func (nh *NotificationHub) SendToUser(userID string, payload []byte) bool {
 	nh.mu.Lock()
 	defer nh.mu.Unlock()
@@ -107,7 +116,7 @@ func (nh *NotificationHub) SendToUser(userID string, payload []byte) bool {
 	return true
 }
 
-// HandleIncomingNotification parses and routes notification signals
+// HandleIncomingNotification معالجة وتوجيه الإشارات الواردة
 func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient, msg []byte) {
 	var notif PitchNotification
 	if err := json.Unmarshal(msg, &notif); err != nil {
@@ -137,10 +146,10 @@ func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient
 
 		sent := nh.SendToUser(notif.ToUserID, payload)
 		if !sent {
-			// User is offline or not connected to notification hub
+			// إشعار المرسل بأن المستخدم المستهدف غير متصل حالياً
 			ack, _ := json.Marshal(map[string]interface{}{
-				"type":    "pitch_error",
-				"message": "المستخدم غير متصل حالياً",
+				"type":     "pitch_error",
+				"message":  "المستخدم غير متصل حالياً",
 				"toUserId": notif.ToUserID,
 			})
 			sender.SafeWrite(ack)
@@ -149,7 +158,6 @@ func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient
 		}
 
 	case "pitch_response":
-		// Sender responded (accepted or declined)
 		var roomID string
 		if notif.Accepted {
 			roomID = uuid.New().String()
@@ -163,10 +171,10 @@ func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient
 			"roomId":         roomID,
 		})
 
-		// Send result back to the original caller
+		// إعادة النتيجة إلى الطالب الأصلي للاتصال
 		nh.SendToUser(notif.ToUserID, payload)
 
-		// Send same result to acceptor to sync room joining
+		// في حال القبول، يتم تزويد القابل بنفس الـ roomId للدخول الفوري للغرفة
 		if notif.Accepted {
 			selfPayload, _ := json.Marshal(map[string]interface{}{
 				"type":     "pitch_result",
@@ -186,7 +194,7 @@ func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient
 	}
 }
 
-// SetupNotificationRoutes registers HTTP / WS routes for notification server
+// SetupNotificationRoutes تسجيل مسارات الـ HTTP و ה- WebSocket للإشعارات
 func SetupNotificationRoutes(app *fiber.App) {
 	app.Use("/ws/notifications", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -194,8 +202,12 @@ func SetupNotificationRoutes(app *fiber.App) {
 			if tokenStr != "" {
 				claims, err := parseToken(tokenStr)
 				if err == nil {
-					c.Locals("userId", claims["userId"])
-					c.Locals("fullName", claims["fullName"])
+					if uID, ok := claims["userId"].(string); ok && uID != "" {
+						c.Locals("userId", uID)
+					}
+					if name, ok := claims["fullName"].(string); ok && name != "" {
+						c.Locals("fullName", name)
+					}
 					return c.Next()
 				}
 			}
@@ -216,6 +228,11 @@ func SetupNotificationRoutes(app *fiber.App) {
 		userID, _ := c.Locals("userId").(string)
 		userName, _ := c.Locals("fullName").(string)
 
+		if userID == "" {
+			c.Close()
+			return
+		}
+
 		client := &NotificationClient{
 			ID:       uuid.New().String(),
 			UserID:   userID,
@@ -226,7 +243,7 @@ func SetupNotificationRoutes(app *fiber.App) {
 
 		notifHub.Register(client)
 
-		// Writer Goroutine
+		// الـ Goroutine المخصصة للكتابة على الـ WebSocket
 		go func() {
 			for msg := range client.sendChan {
 				if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -241,7 +258,7 @@ func SetupNotificationRoutes(app *fiber.App) {
 			c.Close()
 		}()
 
-		// Reader Loop
+		// الحلقة الرئيسية لقراءة الرسائل الواردة
 		for {
 			_, message, err := c.ReadMessage()
 			if err != nil {

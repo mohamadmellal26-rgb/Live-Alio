@@ -14,10 +14,16 @@ import (
 )
 
 type SignalMessage struct {
-	Type      string      `json:"type"`
-	Offer     interface{} `json:"offer,omitempty"`
-	Answer    interface{} `json:"answer,omitempty"`
-	Candidate interface{} `json:"candidate,omitempty"`
+	Type            string      `json:"type"`
+	TargetUserID    string      `json:"targetUserId,omitempty"`
+	CallID          string      `json:"callId,omitempty"`
+	CallerName      string      `json:"callerName,omitempty"`
+	CallerRole      string      `json:"callerRole,omitempty"`
+	CallerAvatarUrl string      `json:"callerAvatarUrl,omitempty"`
+	Note            string      `json:"note,omitempty"`
+	Offer           interface{} `json:"offer,omitempty"`
+	Answer          interface{} `json:"answer,omitempty"`
+	Candidate       interface{} `json:"candidate,omitempty"`
 }
 
 type Client struct {
@@ -57,11 +63,18 @@ func (c *Client) Close() {
 	}
 }
 
+type CallRequest struct {
+	ID           string
+	Caller       *Client
+	TargetUserID string
+}
+
 type Hub struct {
 	youtuberQueue []*Client
 	investorQueue []*Client
 	allQueue      []*Client
 	clients       map[string]*Client
+	pendingCalls  map[string]*CallRequest
 	mu            sync.Mutex
 }
 
@@ -71,6 +84,7 @@ func newHub() *Hub {
 		investorQueue: make([]*Client, 0),
 		allQueue:      make([]*Client, 0),
 		clients:       make(map[string]*Client),
+		pendingCalls:  make(map[string]*CallRequest),
 	}
 }
 
@@ -89,11 +103,100 @@ func (h *Hub) BroadcastOnlineCount() {
 func (h *Hub) RegisterClient(client *Client) {
 	h.mu.Lock()
 	h.clients[client.ID] = client
-	log.Printf("Client registered: %s (%s)", client.ID, client.FullName)
+	log.Printf("Client registered: %s (%s, UserID: %s)", client.ID, client.FullName, client.UserID)
 
 	h.matchClientUnlocked(client)
 	h.BroadcastOnlineCount()
 	h.mu.Unlock()
+}
+
+func (h *Hub) HandleSendCallRequest(caller *Client, sig SignalMessage) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	callID := uuid.New().String()
+	h.pendingCalls[callID] = &CallRequest{
+		ID:           callID,
+		Caller:       caller,
+		TargetUserID: sig.TargetUserID,
+	}
+
+	var targetClient *Client
+	for _, c := range h.clients {
+		if c.UserID == sig.TargetUserID {
+			targetClient = c
+			break
+		}
+	}
+
+	if targetClient != nil {
+		reqMsg, _ := json.Marshal(map[string]interface{}{
+			"type":            "incoming_call_request",
+			"callId":          callID,
+			"callerName":      sig.CallerName,
+			"callerRole":      sig.CallerRole,
+			"callerAvatarUrl": sig.CallerAvatarUrl,
+			"note":            sig.Note,
+		})
+		targetClient.SafeWrite(reqMsg)
+		log.Printf("Direct call request sent from %s to %s (CallID: %s)", caller.FullName, targetClient.FullName, callID)
+	} else {
+		declineMsg, _ := json.Marshal(map[string]interface{}{
+			"type":   "call_declined",
+			"callId": callID,
+			"reason": "User is offline",
+		})
+		caller.SafeWrite(declineMsg)
+		delete(h.pendingCalls, callID)
+	}
+}
+
+func (h *Hub) HandleAcceptCallRequest(acceptor *Client, sig SignalMessage) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	call, exists := h.pendingCalls[sig.CallID]
+	if !exists {
+		return
+	}
+
+	roomID := uuid.New().String()
+	call.Caller.RoomID = roomID
+	call.Caller.Peer = acceptor
+
+	acceptor.RoomID = roomID
+	acceptor.Peer = call.Caller
+
+	acceptedMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "call_accepted",
+		"callId":   sig.CallID,
+		"peerId":   acceptor.ID,
+		"peerName": acceptor.FullName,
+		"roomId":   roomID,
+	})
+	call.Caller.SafeWrite(acceptedMsg)
+
+	log.Printf("Call %s accepted between %s and %s", sig.CallID, call.Caller.FullName, acceptor.FullName)
+	delete(h.pendingCalls, sig.CallID)
+}
+
+func (h *Hub) HandleDeclineCallRequest(decliner *Client, sig SignalMessage) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	call, exists := h.pendingCalls[sig.CallID]
+	if !exists {
+		return
+	}
+
+	declinedMsg, _ := json.Marshal(map[string]interface{}{
+		"type":   "call_declined",
+		"callId": sig.CallID,
+	})
+	call.Caller.SafeWrite(declinedMsg)
+
+	log.Printf("Call %s declined by %s", sig.CallID, decliner.FullName)
+	delete(h.pendingCalls, sig.CallID)
 }
 
 func (h *Hub) FindMatchForClient(client *Client) {
@@ -190,6 +293,12 @@ func (h *Hub) UnregisterClient(client *Client) {
 
 	delete(h.clients, client.ID)
 
+	for callID, call := range h.pendingCalls {
+		if call.Caller.ID == client.ID {
+			delete(h.pendingCalls, callID)
+		}
+	}
+
 	h.youtuberQueue = removeClientFromSlice(h.youtuberQueue, client)
 	h.investorQueue = removeClientFromSlice(h.investorQueue, client)
 	h.allQueue = removeClientFromSlice(h.allQueue, client)
@@ -225,7 +334,7 @@ func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
-	// تهيئة الاتصال بقاعدة البيانات PostgreSQL
+	// تهيئة الاتصال بقاعدة البيانات PostgreSQL و الهجرة التلقائية
 	InitDB()
 
 	app := fiber.New(fiber.Config{
@@ -329,6 +438,21 @@ func main() {
 			if err := json.Unmarshal(message, &sig); err == nil {
 				if sig.Type == "find_match" {
 					hub.FindMatchForClient(client)
+					continue
+				}
+
+				if sig.Type == "send_call_request" {
+					hub.HandleSendCallRequest(client, sig)
+					continue
+				}
+
+				if sig.Type == "accept_call_request" {
+					hub.HandleAcceptCallRequest(client, sig)
+					continue
+				}
+
+				if sig.Type == "decline_call_request" {
+					hub.HandleDeclineCallRequest(client, sig)
 					continue
 				}
 
