@@ -9,15 +9,15 @@ import (
     "gorm.io/gorm"
 )
 
-// Content Model - تم إضافته ليعرف المترجم الهيكل عند التنفيذ في AutoMigrate
+// Content Model - تم تعديل الحقول لتتطابق مع نوع string (UUID) الخاص بجدول User
 type Content struct {
-    ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+    ID          string    `gorm:"primaryKey;type:varchar(36)" json:"id"`
     Title       string    `json:"title"`
     Description string    `json:"description"`
     URL         string    `json:"url"`
     Type        string    `json:"type"` // e.g. "video", "pdf"
-    UserID      uint      `json:"userId"`
-    User        User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
+    UserID      string    `gorm:"type:varchar(36)" json:"userId"`
+    User        User      `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
     CreatedAt   time.Time `json:"createdAt"`
     UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -38,7 +38,7 @@ func InitDB() *gorm.DB {
         log.Fatalf("Failed to connect to PostgreSQL database: %v", err)
     }
 
-    // AutoMigrate للجداول
+    // AutoMigrate للجداول بعد توحيد أنواع الحقول
     err = DB.AutoMigrate(&User{}, &Content{})
     if err != nil {
         log.Fatalf("Failed to auto-migrate database schema: %v", err)
