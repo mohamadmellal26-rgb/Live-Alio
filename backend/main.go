@@ -14,32 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
-
-// DB instance
-var DB *gorm.DB
-
-// User Model المحدث ليتوافق مع الحقول الإضافية (يوتيوبر ومستثمر)
-type User struct {
-	ID             uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-	FullName       string         `json:"fullName"`
-	Email          string         `json:"email" gorm:"unique;index"`
-	Password       string         `json:"-"`
-	Role           string         `json:"role"`
-	Avatar         string         `json:"avatar"`
-	Bio            string         `json:"bio"`
-	Location       string         `json:"location"`
-	Website        string         `json:"website"`
-	TargetIndustry string         `json:"targetIndustry"`
-	YoutubeUrl     string         `json:"youtubeUrl"`     // مخصص لليوتيوبر
-	PyCardId       string         `json:"pyCardId"`       // مخصص للمستثمر
-	ProjectProof   string         `json:"projectProof"`   // مسار ملف إثبات المشروع (PDF) للمستثمر
-	Skills         []string       `json:"skills" gorm:"serializer:json"`
-	FocusAreas     []string       `json:"focusAreas" gorm:"serializer:json"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
-}
 
 type SignalMessage struct {
 	Type            string      `json:"type"`
@@ -460,6 +435,9 @@ func handleDeleteContent(c *fiber.Ctx) error {
 
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
+
+	// تهيئة قاعدة البيانات واتصالها لمنع حدوث خطأ الاتصال وتفعيل الجداول
+	InitDB()
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
