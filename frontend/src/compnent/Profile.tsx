@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   Zap, 
   Globe, 
@@ -14,30 +14,35 @@ import {
   Mail,
   Edit3,
   Plus,
-  X
+  X,
+  Loader
 } from 'lucide-react';
 import { useUserProfile } from './hooks/useUserProfile';
+import LiveCallNotification, { CallRequestData } from './LiveCallNotification';
 import './Profile.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
 
 export const ProfilePage: React.FC = () => {
+  const navigate = useNavigate();
   const { username: pathUsername } = useParams<{ username?: string }>();
   const [searchParams] = useSearchParams();
   const queryUsername = searchParams.get('user') || searchParams.get('profile') || searchParams.get('identifier');
 
-  // استخراج اسم المستخدم المستهدف من المسار أو Query Params
   const targetUsername = pathUsername || queryUsername || undefined;
-
   const { data, isLoading, error } = useUserProfile(targetUsername);
 
   const [activeTab, setActiveTab] = useState<'content' | 'reviews' | 'about'>('content');
   const [imgError, setImgError] = useState(false);
-
   const [isEditing, setIsEditing] = useState(false);
   const [showAddContentModal, setShowAddContentModal] = useState(false);
+  
+  // حالات الاتصال المباشر والـ WebSockets
+  const [isCalling, setIsCalling] = useState(false);
+  const [incomingCall, setIncomingCall] = useState<CallRequestData | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  // قراءة بيانات الجلسة الحالية بأمان من LocalStorage
+  // قراءة بيانات الجلسة الحالية
   const storedUserRaw = localStorage.getItem('user');
   const token = localStorage.getItem('token');
   
@@ -49,6 +54,52 @@ export const ProfilePage: React.FC = () => {
       currentUser = null;
     }
   }
+
+  // إقامة اتصال WebSocket للاستماع للاتصالات الواردة وإرسال الطلبات
+  useEffect(() => {
+    if (!token) return;
+
+    const wsUrl = `wss://live-alio-1.onrender.com/ws/live?token=${token}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+
+        // استقبال طلب اتصال فريد موجّه للمستخدم الحالي
+        if (message.type === 'incoming_call_request') {
+          setIncomingCall({
+            id: message.callId,
+            callerName: message.callerName,
+            callerRole: message.callerRole,
+            callerAvatarUrl: message.callerAvatarUrl,
+            note: message.note || 'مرحباً، يرغب هذا المستخدم بالاتصال بك مباشرة!'
+          });
+        }
+
+        // عند قبول الطرف الآخر للاتصال -> الانتقال فوراً للداشبورد لبدء الـ WebRTC Call
+        if (message.type === 'call_accepted') {
+          setIsCalling(false);
+          navigate('/dashboard', { state: { autoConnectPeerId: message.peerId, peerName: message.peerName } });
+        }
+
+        // عند رفض الطرف الآخر للاتصال
+        if (message.type === 'call_declined') {
+          setIsCalling(false);
+          alert('تم رفض طلب الاتصال من قبل المستلم.');
+        }
+      } catch (err) {
+        console.error('Error parsing WS message in Profile:', err);
+      }
+    };
+
+    return () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
+  }, [token, navigate]);
 
   if (isLoading) {
     return (
@@ -72,8 +123,6 @@ export const ProfilePage: React.FC = () => {
 
   const { profile: user, contents = [], primaryColor = '#e056fd' } = data;
 
-  // 2. التحقق الدقيق مما إذا كان الزائر هو المالك الأصلي للحساب
-  // نضمن ألا يُمنح إذن المالك إلا عند تطابق المعرفات أو البريد أو اسم المستخدم بين الجلسة والبروفايل
   const isOwner = Boolean(
     token && currentUser && user && (
       (currentUser.id && String(currentUser.id) === String(user.id)) ||
@@ -85,17 +134,66 @@ export const ProfilePage: React.FC = () => {
 
   const getFullImageUrl = (path?: string) => {
     if (!path) return null;
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return path;
-    }
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
     return `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
   };
 
   const avatarPath = user.avatarUrl || (user as unknown as { avatar?: string }).avatar;
   const avatarSrc = getFullImageUrl(avatarPath);
 
+  // دالة التعامل مع زر Connect إرسال الإشعار للمستلم
+  const handleConnectClick = () => {
+    if (!token) {
+      alert('يرجى تسجيل الدخول أولاً للاتصال بالمستخدم.');
+      return;
+    }
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      setIsCalling(true);
+      wsRef.current.send(JSON.stringify({
+        type: 'send_call_request',
+        targetUserId: user.id,
+        callerName: currentUser?.fullName || currentUser?.username || 'مستخدم',
+        callerRole: currentUser?.role || 'User',
+        callerAvatarUrl: currentUser?.avatarUrl
+      }));
+    } else {
+      alert('خطأ في الاتصال بالخادم، يرجى إعادة المحاولة.');
+    }
+  };
+
+  // قبول اتصال وارد من طرف مستخدم آخر والتوجيه للداشبورد
+  const handleAcceptCall = (requestId: string) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'accept_call_request',
+        callId: requestId
+      }));
+    }
+    setIncomingCall(null);
+    navigate('/dashboard', { state: { activeCallId: requestId, peerName: incomingCall?.callerName } });
+  };
+
+  // رفض اتصال وارد
+  const handleDeclineCall = (requestId: string) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'decline_call_request',
+        callId: requestId
+      }));
+    }
+    setIncomingCall(null);
+  };
+
   return (
     <div className="profile-page-container" dir="ltr">
+      {/* إشعار الاتصال الوارد */}
+      <LiveCallNotification 
+        request={incomingCall} 
+        onAccept={handleAcceptCall} 
+        onDecline={handleDeclineCall} 
+      />
+
       {/* Header Area */}
       <div className="profile-hero">
         <div className="profile-cover" style={{ background: `linear-gradient(135deg, ${primaryColor}22 0%, #121216 100%)` }} />
@@ -134,7 +232,6 @@ export const ProfilePage: React.FC = () => {
               </div>
             </div>
 
-            {/* الأزرار الديناميكية: أزرار التعديل والإضافة للمالك فقط، وزر Connect للزوار من جميع الأجهزة */}
             <div className="profile-actions" style={{ display: 'flex', gap: '0.75rem' }}>
               <button className="btn-secondary-action">
                 <Share2 size={16} /> Share
@@ -159,41 +256,33 @@ export const ProfilePage: React.FC = () => {
                   </button>
                 </>
               ) : (
-                <button className="btn-pitch-live" style={{ background: primaryColor }}>
-                  <Zap size={18} /> Connect
+                <button 
+                  className="btn-pitch-live" 
+                  onClick={handleConnectClick}
+                  disabled={isCalling}
+                  style={{ background: primaryColor, opacity: isCalling ? 0.7 : 1, cursor: isCalling ? 'not-allowed' : 'pointer' }}
+                >
+                  {isCalling ? <Loader className="animate-spin" size={18} /> : <Zap size={18} />} 
+                  {isCalling ? ' Calling...' : ' Connect'}
                 </button>
               )}
             </div>
           </div>
 
-          {/* Bio & Information */}
           <div className="profile-bio-box">
             {user.bio && <p className="profile-bio-text">{user.bio}</p>}
             <div className="profile-meta-row">
-              {user.email && (
-                <div className="meta-item">
-                  <Mail size={15} /> {user.email}
-                </div>
-              )}
-              {user.location && (
-                <div className="meta-item">
-                  <MapPin size={15} /> {user.location}
-                </div>
-              )}
+              {user.email && <div className="meta-item"><Mail size={15} /> {user.email}</div>}
+              {user.location && <div className="meta-item"><MapPin size={15} /> {user.location}</div>}
               {user.website && (
                 <div className="meta-item">
                   <Globe size={15} /> <a href={user.website} target="_blank" rel="noreferrer" style={{ color: primaryColor, textDecoration: 'none' }}>Website / Channel</a>
                 </div>
               )}
-              {user.joinedDate && (
-                <div className="meta-item">
-                  <Calendar size={15} /> Joined {user.joinedDate}
-                </div>
-              )}
+              {user.joinedDate && <div className="meta-item"><Calendar size={15} /> Joined {user.joinedDate}</div>}
             </div>
           </div>
 
-          {/* Stats Ribbon */}
           {user.stats && (
             <div className="stats-ribbon">
               {user.stats.stat1Label && (
@@ -213,14 +302,13 @@ export const ProfilePage: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Grid Content */}
+      {/* Main Grid Layout */}
       <div className="profile-main-layout">
         <aside>
           {user.targetIndustry && (
             <div className="dark-card">
               <h3 className="card-header-title">
-                <ShieldCheck size={18} style={{ color: primaryColor }} /> 
-                Target & Focus
+                <ShieldCheck size={18} style={{ color: primaryColor }} /> Target & Focus
               </h3>
               <p style={{ fontSize: '0.85rem', color: '#a1a1aa', margin: '0 0 1rem 0' }}>
                 Category: <strong style={{ color: '#fff' }}>{user.targetIndustry}</strong>
@@ -240,8 +328,7 @@ export const ProfilePage: React.FC = () => {
           {user.skills && user.skills.length > 0 && (
             <div className="dark-card">
               <h3 className="card-header-title">
-                <Award size={18} style={{ color: '#eab308' }} /> 
-                Tech Stack & Skills
+                <Award size={18} style={{ color: '#eab308' }} /> Tech Stack & Skills
               </h3>
               <div className="tag-cloud">
                 {user.skills.map((skill, idx) => (
@@ -275,7 +362,6 @@ export const ProfilePage: React.FC = () => {
               </button>
             </div>
 
-            {/* Content Tab */}
             {activeTab === 'content' && (
               <div>
                 {contents.length === 0 ? (
@@ -311,7 +397,6 @@ export const ProfilePage: React.FC = () => {
               </div>
             )}
 
-            {/* Reviews Tab */}
             {activeTab === 'reviews' && (
               <div style={{ color: '#a1a1aa', fontSize: '0.9rem', textAlign: 'center', padding: '2rem 0' }}>
                 <Star size={32} style={{ color: '#eab308', marginBottom: '0.5rem' }} />
@@ -320,7 +405,6 @@ export const ProfilePage: React.FC = () => {
               </div>
             )}
 
-            {/* About Tab */}
             {activeTab === 'about' && (
               <div style={{ color: '#d4d4d8', fontSize: '0.9rem', lineHeight: '1.7' }}>
                 <p>{user.bio || 'No description provided.'}</p>
@@ -330,7 +414,7 @@ export const ProfilePage: React.FC = () => {
         </main>
       </div>
 
-      {/* Edit Profile Modal */}
+      {/* Edit Modal */}
       {isEditing && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e1e24', padding: '2rem', borderRadius: '12px', width: '90%', maxWidth: '500px', border: '1px solid #333' }}>

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
+import { PhoneOff, Mic, MicOff, Camera, VideoOff } from 'lucide-react';
 import './Dashboard.css';
 
 interface MatchFilter {
@@ -15,11 +17,15 @@ const rtcConfiguration: RTCConfiguration = {
 };
 
 export const Dashboard: React.FC = () => {
+  const location = useLocation();
+  const locationState = location.state as { autoConnectPeerId?: string; peerName?: string; activeCallId?: string } | null;
+
   const [activeTab, setActiveTab] = useState<'match' | 'history' | 'favorites'>('match');
   const [isSearching, setIsSearching] = useState(false);
   const [isConnectedToPeer, setIsConnectedToPeer] = useState(false);
-  const [peerName, setPeerName] = useState<string>('');
+  const [peerName, setPeerName] = useState<string>(locationState?.peerName || '');
   const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
   const [onlineUsersCount, setOnlineUsersCount] = useState<number>(0);
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -46,7 +52,7 @@ export const Dashboard: React.FC = () => {
 
   // 1. تشغيل الكاميرا المحلية
   const startLocalCamera = useCallback(async () => {
-    if (localStreamRef.current) return; // تم تشغيلها سابقاً
+    if (localStreamRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
@@ -61,7 +67,7 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
-  // 2. إيقاف الكاميرا المحلية عند الخروج النهائي من التطبيق
+  // 2. إيقاف الكاميرا المحلية
   const stopLocalCamera = useCallback(() => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -78,7 +84,7 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
-  // 3. تنظيف اتصال الـ WebRTC الحالي فقط
+  // 3. تنظيف اتصال الـ WebRTC الحالي
   const cleanupPeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.ontrack = null;
@@ -96,7 +102,7 @@ export const Dashboard: React.FC = () => {
     iceCandidatesQueue.current = [];
   }, []);
 
-  // 4. العودة لوضع الكاميرا العادي (إلغاء المحادثة)
+  // 4. العودة لوضع الكاميرا العادي
   const resetToCameraOnly = useCallback(() => {
     cleanupPeerConnection();
     setIsSearching(false);
@@ -167,10 +173,11 @@ export const Dashboard: React.FC = () => {
         }
         break;
 
-      case 'match_found': {
+      case 'match_found':
+      case 'direct_call_start': {
         setIsSearching(false);
         setIsConnectedToPeer(true);
-        setPeerName(data.peerName || 'Partner');
+        if (data.peerName) setPeerName(data.peerName);
 
         const pc = createPeerConnection();
 
@@ -235,9 +242,20 @@ export const Dashboard: React.FC = () => {
     }
 
     const token = localStorage.getItem('token') || '';
-    const wsUrl = `wss://live-alio.onrender.com/ws/live?role=${filters.targetType}&token=${token}`;
+    const wsUrl = `wss://live-alio-1.onrender.com/ws/live?role=${filters.targetType}&token=${token}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      if (locationState?.activeCallId || locationState?.autoConnectPeerId) {
+        setIsConnectedToPeer(true);
+        ws.send(JSON.stringify({
+          type: 'init_direct_call',
+          callId: locationState.activeCallId,
+          peerId: locationState.autoConnectPeerId
+        }));
+      }
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -251,15 +269,13 @@ export const Dashboard: React.FC = () => {
     ws.onclose = () => {
       wsRef.current = null;
     };
-  }, [filters.targetType, handleSignalingMessage]);
+  }, [filters.targetType, handleSignalingMessage, locationState]);
 
-  // إغلاق الجلسة عند الضغط على "Stop Session" أو "إغلاق"
   const handleStopSession = useCallback(() => {
     sendSignal({ type: 'leave' });
     resetToCameraOnly();
   }, [sendSignal, resetToCameraOnly]);
 
-  // البدء بالبحث عن مطابقة جديدة
   const handleStartMatching = useCallback(() => {
     sendSignal({ type: 'leave' });
     cleanupPeerConnection();
@@ -274,7 +290,6 @@ export const Dashboard: React.FC = () => {
     }
   }, [sendSignal, cleanupPeerConnection, connectPresenceWS]);
 
-  // إدارة الكاميرا والـ WebSocket عند إقلاع الصفحة والخروج
   useEffect(() => {
     startLocalCamera();
     connectPresenceWS();
@@ -306,6 +321,16 @@ export const Dashboard: React.FC = () => {
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsMuted(!audioTrack.enabled);
+      }
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsVideoOff(!videoTrack.enabled);
       }
     }
   };
@@ -379,15 +404,24 @@ export const Dashboard: React.FC = () => {
             <span>Online Users: <strong>{onlineUsersCount.toLocaleString()}</strong></span>
           </div>
 
-          <div className="header-actions">
-            <button className="btn-icon">Cam Settings</button>
-            <button className="btn-login-outline btn-sm">Upgrade Account</button>
+          <div className="header-actions" style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="btn-icon" onClick={toggleMute} title="Mute/Unmute">
+              {isMuted ? <MicOff color="#ef4444" size={18} /> : <Mic size={18} />}
+            </button>
+            <button className="btn-icon" onClick={toggleVideo} title="Cam On/Off">
+              {isVideoOff ? <VideoOff color="#ef4444" size={18} /> : <Camera size={18} />}
+            </button>
+            {isConnectedToPeer && (
+              <button className="btn-login-outline btn-sm" style={{ background: '#ef4444', color: '#fff', border: 'none' }} onClick={handleStopSession}>
+                <PhoneOff size={16} /> Disconnect
+              </button>
+            )}
           </div>
         </header>
 
         <div className="dashboard-content">
           <div className="cam-studio-wrapper">
-            {/* الشاشة المحلية: الكاميرا تعمل دائماً */}
+            {/* الشاشة المحلية */}
             <div className="cam-box local-cam">
               <span className="cam-label">YOU ({user.fullName || 'User'})</span>
               <video 
@@ -399,13 +433,13 @@ export const Dashboard: React.FC = () => {
               />
             </div>
 
-            {/* الشاشة البعيدة: تتغير حسب الحالة */}
+            {/* الشاشة البعيدة */}
             <div className={`cam-box remote-cam ${isSearching ? 'searching' : ''}`}>
               <span className="cam-label">
                 {isSearching 
                   ? 'SEARCHING FOR A MATCH...' 
                   : isConnectedToPeer 
-                  ? `MATCHED WITH: ${peerName}` 
+                  ? `MATCHED WITH: ${peerName || 'Partner'}` 
                   : 'CAMERA DISPLAY'}
               </span>
               
