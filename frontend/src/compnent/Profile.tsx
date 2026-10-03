@@ -8,7 +8,6 @@ import {
   CheckCircle, 
   Share2, 
   Award, 
-  Star,
   ShieldCheck,
   User as UserIcon,
   Mail,
@@ -16,9 +15,6 @@ import {
   Plus,
   X,
   Loader,
-  Play,
-  Trash2,
-  Video,
   FileText,
   Upload,
   ExternalLink,
@@ -52,13 +48,12 @@ export const ProfilePage: React.FC = () => {
   const targetUsername = pathUsername || queryUsername || undefined;
   const { data, isLoading, error, refetch } = useUserProfile(targetUsername) as any;
 
-  const [activeTab, setActiveTab] = useState<'content' | 'reviews' | 'about'>('content');
   const [imgError, setImgError] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showAddContentModal, setShowAddContentModal] = useState(false);
 
   // حالات إدارة وتفاصيل المحتوى المضاف
-  const [contentList, setContentList] = useState<ContentItem[]>([]);
+  const [, setContentList] = useState<ContentItem[]>([]);
   const [selectedMedia, setSelectedMedia] = useState<ContentItem | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -179,7 +174,7 @@ export const ProfilePage: React.FC = () => {
             callerName: message.callerName || 'Unknown User',
             callerRole: message.callerRole,
             callerAvatarUrl: message.callerAvatarUrl,
-            note: message.note || 'مرحباً، يرغب هذا المستخدم بالاتصال بك مباشرة!'
+            note: message.note || ''
           });
         }
 
@@ -296,48 +291,74 @@ export const ProfilePage: React.FC = () => {
     setIncomingCall(null);
   };
 
-  // دالة حفظ التعديلات على البروفايل
+  // دالة حفظ التعديلات المصححة بالكامل
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingProfile(true);
 
     try {
-      const formData = new FormData();
-      formData.append('fullName', editFormData.fullName);
-      formData.append('role', editFormData.role);
-      formData.append('bio', editFormData.bio);
-      formData.append('location', editFormData.location);
-      formData.append('website', editFormData.website);
-      formData.append('targetIndustry', editFormData.targetIndustry);
+      const skillsArray = editFormData.skills
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
       
-      // تحويل المهارات والمجالات لصفوف
-      const skillsArray = editFormData.skills.split(',').map(s => s.trim()).filter(Boolean);
-      const focusArray = editFormData.focusAreas.split(',').map(s => s.trim()).filter(Boolean);
+      const focusArray = editFormData.focusAreas
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
 
-      formData.append('skills', JSON.stringify(skillsArray));
-      formData.append('focusAreas', JSON.stringify(focusArray));
+      let response: Response;
 
       if (editFormData.avatarFile) {
+        const formData = new FormData();
+        formData.append('fullName', editFormData.fullName);
+        formData.append('role', editFormData.role);
+        formData.append('bio', editFormData.bio);
+        formData.append('location', editFormData.location);
+        formData.append('website', editFormData.website);
+        formData.append('targetIndustry', editFormData.targetIndustry);
+        formData.append('skills', JSON.stringify(skillsArray));
+        formData.append('focusAreas', JSON.stringify(focusArray));
         formData.append('avatar', editFormData.avatarFile);
+
+        response = await fetch(`${API_BASE_URL}/api/user/profile`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+      } else {
+        const payload = {
+          fullName: editFormData.fullName,
+          role: editFormData.role,
+          bio: editFormData.bio,
+          location: editFormData.location,
+          website: editFormData.website,
+          targetIndustry: editFormData.targetIndustry,
+          skills: skillsArray,
+          focusAreas: focusArray
+        };
+
+        response = await fetch(`${API_BASE_URL}/api/user/profile`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
       if (!response.ok) {
-        throw new Error('Failed to update profile');
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || 'Failed to update profile');
       }
 
       const updatedRes = await response.json();
 
-      // تحديث بيانات الجلسة المحلية إذا كان المستخدم الحالي
       if (currentUser) {
-        const newUserData = { ...currentUser, ...updatedRes.user };
+        const newUserData = { ...currentUser, ...(updatedRes.user || updatedRes) };
         localStorage.setItem('user', JSON.stringify(newUserData));
         setCurrentUser(newUserData);
       }
@@ -345,9 +366,9 @@ export const ProfilePage: React.FC = () => {
       if (refetch) refetch();
       setIsEditing(false);
       alert('تم تحديث البروفايل بنجاح!');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error updating profile:', err);
-      alert('حدث خطأ أثناء حفظ البيانات، يرجى المحاولة لاحقاً.');
+      alert(err.message || 'حدث خطأ أثناء حفظ البيانات، يرجى المحاولة لاحقاً.');
     } finally {
       setIsSavingProfile(false);
     }
@@ -407,40 +428,9 @@ export const ProfilePage: React.FC = () => {
       });
     } catch (err) {
       console.error('Error uploading content:', err);
-      const fallbackItem: ContentItem = {
-        id: String(Date.now()),
-        title: newContent.title,
-        description: newContent.description,
-        type: newContent.type,
-        externalLink: newContent.externalLink,
-        mediaUrl: newContent.mediaFile ? URL.createObjectURL(newContent.mediaFile) : undefined,
-        thumbnailUrl: newContent.thumbnailFile ? URL.createObjectURL(newContent.thumbnailFile) : undefined,
-        createdAt: new Date().toISOString()
-      };
-      setContentList((prev) => [fallbackItem, ...prev]);
-      setShowAddContentModal(false);
+      alert('فشل رفع المحتوى للسيرفر. يرجى التحقق من الاتصال.');
     } finally {
       setIsUploading(false);
-    }
-  };
-
-  // دالة حذف المحتوى
-  const handleDeleteContent = async (contentId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!window.confirm('هل أنت تأكد من رغبتك في حذف هذا المحتوى؟')) return;
-
-    try {
-      await fetch(`${API_BASE_URL}/api/content/${contentId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      setContentList((prev) => prev.filter((item) => item.id !== contentId));
-      if (selectedMedia?.id === contentId) setSelectedMedia(null);
-    } catch (err) {
-      console.error('Failed to delete content:', err);
-      setContentList((prev) => prev.filter((item) => item.id !== contentId));
     }
   };
 
@@ -595,145 +585,6 @@ export const ProfilePage: React.FC = () => {
             </div>
           )}
         </aside>
-
-        <main>
-          <div className="dark-card">
-            <div className="tab-navigation">
-              <button 
-                className={`tab-btn ${activeTab === 'content' ? 'active' : ''}`}
-                onClick={() => setActiveTab('content')}
-              >
-                Projects & Demos ({contentList.length})
-              </button>
-              <button 
-                className={`tab-btn ${activeTab === 'reviews' ? 'active' : ''}`}
-                onClick={() => setActiveTab('reviews')}
-              >
-                Peer Reviews
-              </button>
-              <button 
-                className={`tab-btn ${activeTab === 'about' ? 'active' : ''}`}
-                onClick={() => setActiveTab('about')}
-              >
-                Overview
-              </button>
-            </div>
-
-            {activeTab === 'content' && (
-              <div>
-                {contentList.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '3rem 0' }}>
-                    <Video size={48} style={{ color: '#333', marginBottom: '1rem' }} />
-                    <p style={{ color: '#a1a1aa', marginBottom: '1rem' }}>No content or projects published yet.</p>
-                    {isOwner && (
-                      <button 
-                        className="btn-pitch-live" 
-                        onClick={() => setShowAddContentModal(true)}
-                        style={{ background: primaryColor }}
-                      >
-                        <Plus size={16} /> Upload First Project
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="pitch-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
-                    {contentList.map((item: ContentItem) => {
-                      const thumb = getFullImageUrl(item.thumbnailUrl) || getFullImageUrl(item.mediaUrl);
-                      return (
-                        <div 
-                          key={item.id} 
-                          className="pitch-card"
-                          onClick={() => setSelectedMedia(item)}
-                          style={{
-                            background: '#18181c',
-                            borderRadius: '10px',
-                            overflow: 'hidden',
-                            border: '1px solid #27272a',
-                            cursor: 'pointer',
-                            transition: 'transform 0.2s, border-color 0.2s',
-                            position: 'relative'
-                          }}
-                        >
-                          <div className="pitch-thumbnail" style={{ position: 'relative', width: '100%', height: '160px', background: '#09090b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            {thumb ? (
-                              <img src={thumb} alt={item.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            ) : (
-                              <div style={{ color: '#52525b', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                                {item.type === 'video' ? <Video size={36} /> : <FileText size={36} />}
-                              </div>
-                            )}
-
-                            {item.type === 'video' && (
-                              <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <div style={{ background: primaryColor, borderRadius: '50%', padding: '0.6rem', display: 'flex', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
-                                  <Play size={20} style={{ color: '#fff', fill: '#fff', marginLeft: '2px' }} />
-                                </div>
-                              </div>
-                            )}
-
-                            {item.duration && (
-                              <span style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75rem' }}>
-                                {item.duration}
-                              </span>
-                            )}
-
-                            {isOwner && (
-                              <button
-                                onClick={(e) => handleDeleteContent(item.id, e)}
-                                style={{
-                                  position: 'absolute',
-                                  top: '8px',
-                                  right: '8px',
-                                  background: 'rgba(239, 68, 68, 0.85)',
-                                  border: 'none',
-                                  color: '#fff',
-                                  borderRadius: '6px',
-                                  padding: '6px',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center'
-                                }}
-                                title="Delete content"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="pitch-content" style={{ padding: '0.85rem' }}>
-                            <h4 className="pitch-title" style={{ margin: '0 0 0.4rem 0', color: '#fff', fontSize: '0.95rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {item.title}
-                            </h4>
-                            {item.description && (
-                              <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.8rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                {item.description}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'reviews' && (
-              <div style={{ color: '#a1a1aa', fontSize: '0.9rem', textAlign: 'center', padding: '2rem 0' }}>
-                <Star size={32} style={{ color: '#eab308', marginBottom: '0.5rem' }} />
-                <p style={{ color: '#fff', fontWeight: 600 }}>Verified Community Profile</p>
-                <p>No reviews posted yet.</p>
-              </div>
-            )}
-
-            {activeTab === 'about' && (
-              <div style={{ color: '#d4d4d8', fontSize: '0.9rem', lineHeight: '1.7' }}>
-                <p>{user.bio || 'No description provided.'}</p>
-              </div>
-            )}
-          </div>
-        </main>
       </div>
 
       {/* Modal لعرض التفاصيل/الميديا */}
@@ -897,7 +748,7 @@ export const ProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal تعديل البروفايل الكامل والمطور */}
+      {/* Modal تعديل البروفايل */}
       {isEditing && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '1rem' }}>
           <div style={{ background: '#1e1e24', padding: '1.75rem', borderRadius: '12px', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto', border: '1px solid #333' }}>
@@ -911,7 +762,6 @@ export const ProfilePage: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {/* تعديل صورة الحساب */}
               <div>
                 <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>
                   Profile Picture

@@ -18,9 +18,6 @@ import (
 
 var jwtSecret = []byte("super_secret_live_aleo_key_2026")
 
-// DB متغير الجلسة لقاعدة البيانات
-var DB *gorm.DB
-
 // User نموذج المستخدم في قاعدة البيانات
 type User struct {
 	ID             string    `gorm:"primaryKey;type:uuid" json:"id"`
@@ -107,7 +104,6 @@ func saveUploadedFile(c *fiber.Ctx, formKey string) (string, error) {
 	return "/uploads/" + filename, nil
 }
 
-// handleSignup لإنشاء حساب جديد وتخزينه في قاعدة البيانات
 func handleSignup(c *fiber.Ctx) error {
 	var req RegisterRequest
 
@@ -173,7 +169,6 @@ func handleSignup(c *fiber.Ctx) error {
 	})
 }
 
-// handleLogin لتسجيل الدخول
 func handleLogin(c *fiber.Ctx) error {
 	var req LoginRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -205,7 +200,6 @@ func handleLogin(c *fiber.Ctx) error {
 	})
 }
 
-// handleGetUserProfile لجلب البروفايل من قاعدة البيانات
 func handleGetUserProfile(c *fiber.Ctx) error {
 	identifier := strings.TrimSpace(c.Query("identifier"))
 	if identifier == "" {
@@ -214,13 +208,11 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 
 	var foundUser User
 
-	// 1. البحث عبر query param
 	if identifier != "" {
 		DB.Where("LOWER(email) = ? OR id = ? OR LOWER(full_name) = ?",
 			strings.ToLower(identifier), identifier, strings.ToLower(identifier)).First(&foundUser)
 	}
 
-	// 2. القراءة من Authorization Header إن لم يُعثر عليه
 	if foundUser.ID == "" {
 		authHeader := c.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
@@ -233,7 +225,6 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 		}
 	}
 
-	// 3. Fallback: جلب أول مستخدم متوفر
 	if foundUser.ID == "" {
 		DB.First(&foundUser)
 	}
@@ -249,7 +240,6 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 	})
 }
 
-// handleUpdateUserProfile لتحديث البيانات الشخصية وصورة الحساب
 func handleUpdateUserProfile(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -269,10 +259,9 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 
 	var user User
 	if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
-		return c.Status(4404).JSON(fiber.Map{"error": "User not found"})
+		return c.Status(404).JSON(fiber.Map{"error": "User not found"})
 	}
 
-	// استخراج البيانات النصية المرسلة عبر FormData
 	if fullName := c.FormValue("fullName"); fullName != "" {
 		user.FullName = fullName
 	}
@@ -292,7 +281,6 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		user.TargetIndustry = targetIndustry
 	}
 
-	// معالجة مصفوفة Skills المرسلة كـ JSON String
 	if skillsRaw := c.FormValue("skills"); skillsRaw != "" {
 		var parsedSkills []string
 		if err := json.Unmarshal([]byte(skillsRaw), &parsedSkills); err == nil {
@@ -300,7 +288,6 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		}
 	}
 
-	// معالجة مصفوفة FocusAreas المرسلة كـ JSON String
 	if focusRaw := c.FormValue("focusAreas"); focusRaw != "" {
 		var parsedFocus []string
 		if err := json.Unmarshal([]byte(focusRaw), &parsedFocus); err == nil {
@@ -308,7 +295,6 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		}
 	}
 
-	// حفظ الصورة الجديدة إن وُجدت
 	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
 		user.Avatar = avatarPath
 	}

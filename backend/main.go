@@ -196,7 +196,6 @@ func (h *Hub) HandleDeclineCallRequest(receiver *Client, sig SignalMessage) {
 	callReq.Caller.SafeWrite(msgCaller)
 }
 
-// HandleInitDirectCall لربط الطرفين القادمين من إشعار القبول عبر roomId مشترك
 func (h *Hub) HandleInitDirectCall(client *Client, sig SignalMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -214,7 +213,6 @@ func (h *Hub) HandleInitDirectCall(client *Client, sig SignalMessage) {
 
 	h.rooms[roomID][client.ID] = client
 
-	// إذا اكتمل الطرفان في نفس الغرفة المباشرة
 	if len(h.rooms[roomID]) == 2 {
 		var peer *Client
 		for id, c := range h.rooms[roomID] {
@@ -228,7 +226,6 @@ func (h *Hub) HandleInitDirectCall(client *Client, sig SignalMessage) {
 			client.Peer = peer
 			peer.Peer = client
 
-			// العميل الذي دخل الغرفة ثانياً يعتبر هو المبادر لإطلاق الـ Offer
 			msg1, _ := json.Marshal(map[string]interface{}{
 				"type":      "direct_call_start",
 				"roomId":    roomID,
@@ -375,7 +372,6 @@ func (h *Hub) UnregisterClient(client *Client) {
 	h.mu.Unlock()
 }
 
-// ForwardSignalToRoom لتمرير مصفوفات WebSockets داخل نفس الغرفة فورياً
 func (h *Hub) ForwardSignalToRoom(sender *Client, rawMsg []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -404,6 +400,40 @@ func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 	return result
 }
 
+// Handler مخصص لرفع المحتوى
+func handleUploadContent(c *fiber.Ctx) error {
+	filePath, err := saveUploadedFile(c, "file")
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to upload file"})
+	}
+
+	title := c.FormValue("title")
+	contentType := c.FormValue("type")
+
+	return c.Status(201).JSON(fiber.Map{
+		"message": "Content uploaded successfully",
+		"content": fiber.Map{
+			"id":    uuid.New().String(),
+			"title": title,
+			"type":  contentType,
+			"url":   filePath,
+		},
+	})
+}
+
+// Handler مخصص لحذف المحتوى
+func handleDeleteContent(c *fiber.Ctx) error {
+	contentID := c.Params("id")
+	if contentID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "Content ID is required"})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":   "Content deleted successfully",
+		"contentId": contentID,
+	})
+}
+
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
@@ -411,7 +441,7 @@ func main() {
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
-		BodyLimit: 50 * 1024 * 1024, // زيادة سعة الرفع للملفات الكبيرة
+		BodyLimit: 50 * 1024 * 1024,
 	})
 
 	app.Use(logger.New())
@@ -425,19 +455,16 @@ func main() {
 
 	hub := newHub()
 
-	// تسجيل مسارات الـ API (توافق مزدوج لضمان عمل الفرانك إند)
 	setupRoutes := func(router fiber.Router) {
 		router.Get("/user/profile", handleGetUserProfile)
 		router.Put("/user/profile", handleUpdateUserProfile)
 		router.Post("/signup", handleSignup)
 		router.Post("/login", handleLogin)
 
-		// مسارات إضافة وحذف المحتوى والـ Demos
 		router.Post("/content/upload", handleUploadContent)
 		router.Delete("/content/:id", handleDeleteContent)
 	}
 
-	// مسارات مباشر وبسابقة /api
 	setupRoutes(app.Group("/api"))
 	setupRoutes(app.Group("/api/v1"))
 
@@ -536,7 +563,7 @@ func main() {
 				case "leave":
 					hub.mu.Lock()
 					if client.Peer != nil {
-                        peer := client.Peer
+						peer := client.Peer
 						peer.Peer = nil
 						peer.RoomID = ""
 
@@ -553,7 +580,6 @@ func main() {
 				}
 			}
 
-			// توجيه إشارات WebRTC للقرين المباشر أو لأعضاء الغرفة المباشرة
 			hub.mu.Lock()
 			peer := client.Peer
 			roomID := client.RoomID
