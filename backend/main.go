@@ -24,6 +24,8 @@ type SignalMessage struct {
 	Offer           interface{} `json:"offer,omitempty"`
 	Answer          interface{} `json:"answer,omitempty"`
 	Candidate       interface{} `json:"candidate,omitempty"`
+	RoomID          string      `json:"roomId,omitempty"`
+	PeerID          string      `json:"peerId,omitempty"`
 }
 
 type Client struct {
@@ -73,7 +75,8 @@ type Hub struct {
 	youtuberQueue []*Client
 	investorQueue []*Client
 	allQueue      []*Client
-	clients       map[string]*Client
+	clients       map[string]*Client            // key: client.ID
+	rooms         map[string]map[string]*Client // key: roomId -> map[clientID]*Client
 	pendingCalls  map[string]*CallRequest
 	mu            sync.Mutex
 }
@@ -84,6 +87,7 @@ func newHub() *Hub {
 		investorQueue: make([]*Client, 0),
 		allQueue:      make([]*Client, 0),
 		clients:       make(map[string]*Client),
+		rooms:         make(map[string]map[string]*Client),
 		pendingCalls:  make(map[string]*CallRequest),
 	}
 }
@@ -105,98 +109,64 @@ func (h *Hub) RegisterClient(client *Client) {
 	h.clients[client.ID] = client
 	log.Printf("Client registered: %s (%s, UserID: %s)", client.ID, client.FullName, client.UserID)
 
-	h.matchClientUnlocked(client)
 	h.BroadcastOnlineCount()
 	h.mu.Unlock()
 }
 
-func (h *Hub) HandleSendCallRequest(caller *Client, sig SignalMessage) {
+// HandleInitDirectCall لربط الطرفين القادمين من إشعار القبول عبر roomId مشترك
+func (h *Hub) HandleInitDirectCall(client *Client, sig SignalMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	callID := uuid.New().String()
-	h.pendingCalls[callID] = &CallRequest{
-		ID:           callID,
-		Caller:       caller,
-		TargetUserID: sig.TargetUserID,
+	roomID := sig.RoomID
+	if roomID == "" {
+		return
 	}
 
-	var targetClient *Client
-	for _, c := range h.clients {
-		if c.UserID == sig.TargetUserID {
-			targetClient = c
-			break
+	client.RoomID = roomID
+
+	if _, exists := h.rooms[roomID]; !exists {
+		h.rooms[roomID] = make(map[string]*Client)
+	}
+
+	h.rooms[roomID][client.ID] = client
+
+	// إذا اكتمل الطرفان في نفس الغرفة المباشرة
+	if len(h.rooms[roomID]) == 2 {
+		var peer *Client
+		for id, c := range h.rooms[roomID] {
+			if id != client.ID {
+				peer = c
+				break
+			}
+		}
+
+		if peer != nil {
+			client.Peer = peer
+			peer.Peer = client
+
+			// العميل الذي دخل الغرفة ثانياً يعتبر هو المبادر لإطلاق الـ Offer
+			msg1, _ := json.Marshal(map[string]interface{}{
+				"type":      "direct_call_start",
+				"roomId":    roomID,
+				"peerId":    peer.ID,
+				"peerName":  peer.FullName,
+				"initiator": true,
+			})
+			client.SafeWrite(msg1)
+
+			msg2, _ := json.Marshal(map[string]interface{}{
+				"type":      "direct_call_start",
+				"roomId":    roomID,
+				"peerId":    client.ID,
+				"peerName":  client.FullName,
+				"initiator": false,
+			})
+			peer.SafeWrite(msg2)
+
+			log.Printf("Direct Call initialized successfully in room %s between %s and %s", roomID, client.FullName, peer.FullName)
 		}
 	}
-
-	if targetClient != nil {
-		reqMsg, _ := json.Marshal(map[string]interface{}{
-			"type":            "incoming_call_request",
-			"callId":          callID,
-			"callerName":      sig.CallerName,
-			"callerRole":      sig.CallerRole,
-			"callerAvatarUrl": sig.CallerAvatarUrl,
-			"note":            sig.Note,
-		})
-		targetClient.SafeWrite(reqMsg)
-		log.Printf("Direct call request sent from %s to %s (CallID: %s)", caller.FullName, targetClient.FullName, callID)
-	} else {
-		declineMsg, _ := json.Marshal(map[string]interface{}{
-			"type":   "call_declined",
-			"callId": callID,
-			"reason": "User is offline",
-		})
-		caller.SafeWrite(declineMsg)
-		delete(h.pendingCalls, callID)
-	}
-}
-
-func (h *Hub) HandleAcceptCallRequest(acceptor *Client, sig SignalMessage) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	call, exists := h.pendingCalls[sig.CallID]
-	if !exists {
-		return
-	}
-
-	roomID := uuid.New().String()
-	call.Caller.RoomID = roomID
-	call.Caller.Peer = acceptor
-
-	acceptor.RoomID = roomID
-	acceptor.Peer = call.Caller
-
-	acceptedMsg, _ := json.Marshal(map[string]interface{}{
-		"type":     "call_accepted",
-		"callId":   sig.CallID,
-		"peerId":   acceptor.ID,
-		"peerName": acceptor.FullName,
-		"roomId":   roomID,
-	})
-	call.Caller.SafeWrite(acceptedMsg)
-
-	log.Printf("Call %s accepted between %s and %s", sig.CallID, call.Caller.FullName, acceptor.FullName)
-	delete(h.pendingCalls, sig.CallID)
-}
-
-func (h *Hub) HandleDeclineCallRequest(decliner *Client, sig SignalMessage) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	call, exists := h.pendingCalls[sig.CallID]
-	if !exists {
-		return
-	}
-
-	declinedMsg, _ := json.Marshal(map[string]interface{}{
-		"type":   "call_declined",
-		"callId": sig.CallID,
-	})
-	call.Caller.SafeWrite(declinedMsg)
-
-	log.Printf("Call %s declined by %s", sig.CallID, decliner.FullName)
-	delete(h.pendingCalls, sig.CallID)
 }
 
 func (h *Hub) FindMatchForClient(client *Client) {
@@ -293,9 +263,10 @@ func (h *Hub) UnregisterClient(client *Client) {
 
 	delete(h.clients, client.ID)
 
-	for callID, call := range h.pendingCalls {
-		if call.Caller.ID == client.ID {
-			delete(h.pendingCalls, callID)
+	if client.RoomID != "" && h.rooms[client.RoomID] != nil {
+		delete(h.rooms[client.RoomID], client.ID)
+		if len(h.rooms[client.RoomID]) == 0 {
+			delete(h.rooms, client.RoomID)
 		}
 	}
 
@@ -334,7 +305,6 @@ func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
-	// تهيئة الاتصال بقاعدة البيانات PostgreSQL و الهجرة التلقائية
 	InitDB()
 
 	app := fiber.New(fiber.Config{
@@ -354,12 +324,10 @@ func main() {
 
 	api := app.Group("/api/v1")
 
-	// مسارات الـ Auth
 	api.Get("/user/profile", handleGetUserProfile)
 	api.Post("/signup", handleSignup)
 	api.Post("/login", handleLogin)
 
-	// مسارات خادم الإشعارات
 	SetupNotificationRoutes(app)
 
 	app.Use("/ws", func(c *fiber.Ctx) error {
@@ -436,23 +404,13 @@ func main() {
 
 			var sig SignalMessage
 			if err := json.Unmarshal(message, &sig); err == nil {
+				if sig.Type == "init_direct_call" {
+					hub.HandleInitDirectCall(client, sig)
+					continue
+				}
+
 				if sig.Type == "find_match" {
 					hub.FindMatchForClient(client)
-					continue
-				}
-
-				if sig.Type == "send_call_request" {
-					hub.HandleSendCallRequest(client, sig)
-					continue
-				}
-
-				if sig.Type == "accept_call_request" {
-					hub.HandleAcceptCallRequest(client, sig)
-					continue
-				}
-
-				if sig.Type == "decline_call_request" {
-					hub.HandleDeclineCallRequest(client, sig)
 					continue
 				}
 

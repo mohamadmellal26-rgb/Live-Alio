@@ -13,12 +13,19 @@ const rtcConfiguration: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
   ],
 };
 
 export const Dashboard: React.FC = () => {
   const location = useLocation();
-  const locationState = location.state as { autoConnectPeerId?: string; peerName?: string; activeCallId?: string } | null;
+  const locationState = location.state as { 
+    autoConnectPeerId?: string; 
+    peerName?: string; 
+    activeCallId?: string; 
+    roomId?: string; 
+    initiator?: boolean 
+  } | null;
 
   const [activeTab, setActiveTab] = useState<'match' | 'history' | 'favorites'>('match');
   const [isSearching, setIsSearching] = useState(false);
@@ -50,9 +57,9 @@ export const Dashboard: React.FC = () => {
 
   const isRegularUser = !user?.role || user?.role === 'user' || user?.role === 'regular';
 
-  // 1. تشغيل الكاميرا المحلية
+  // 1. تشغيل الكاميرا المحلية وضمان جاهزيتها
   const startLocalCamera = useCallback(async () => {
-    if (localStreamRef.current) return;
+    if (localStreamRef.current) return localStreamRef.current;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
@@ -62,8 +69,10 @@ export const Dashboard: React.FC = () => {
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
       }
+      return stream;
     } catch (err) {
       console.error('Error accessing camera/mic:', err);
+      return null;
     }
   }, []);
 
@@ -114,41 +123,43 @@ export const Dashboard: React.FC = () => {
     resetToCameraOnly();
   }, [resetToCameraOnly]);
 
-  const processQueuedCandidates = async () => {
-    if (!peerConnectionRef.current) return;
+  const processQueuedCandidates = useCallback(async () => {
+    if (!peerConnectionRef.current || !peerConnectionRef.current.remoteDescription) return;
     while (iceCandidatesQueue.current.length > 0) {
       const candidate = iceCandidatesQueue.current.shift();
       if (candidate) {
         try {
           await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (e) {
-          console.error('Error adding queued candidate:', e);
+          console.error('Error adding queued ICE candidate:', e);
         }
       }
     }
-  };
+  }, []);
 
-  const createPeerConnection = useCallback(() => {
+  const createPeerConnection = useCallback((stream: MediaStream | null) => {
     cleanupPeerConnection();
 
     const pc = new RTCPeerConnection(rtcConfiguration);
     peerConnectionRef.current = pc;
 
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current!);
+    const currentStream = stream || localStreamRef.current;
+    if (currentStream) {
+      currentStream.getTracks().forEach((track) => {
+        pc.addTrack(track, currentStream);
       });
     }
 
     pc.ontrack = (event) => {
       if (remoteVideoRef.current && event.streams[0]) {
         remoteVideoRef.current.srcObject = event.streams[0];
+        remoteVideoRef.current.play().catch(e => console.log('Autoplay play error:', e));
       }
     };
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        sendSignal({ type: 'ice-candidate', candidate: event.candidate });
+        sendSignal({ type: 'candidate', candidate: event.candidate });
       }
     };
 
@@ -179,7 +190,8 @@ export const Dashboard: React.FC = () => {
         setIsConnectedToPeer(true);
         if (data.peerName) setPeerName(data.peerName);
 
-        const pc = createPeerConnection();
+        const activeStream = await startLocalCamera();
+        const pc = createPeerConnection(activeStream);
 
         if (data.initiator) {
           try {
@@ -194,7 +206,12 @@ export const Dashboard: React.FC = () => {
       }
 
       case 'offer': {
-        const currentPc = peerConnectionRef.current || createPeerConnection();
+        setIsSearching(false);
+        setIsConnectedToPeer(true);
+
+        const activeStream = await startLocalCamera();
+        const currentPc = peerConnectionRef.current || createPeerConnection(activeStream);
+
         await currentPc.setRemoteDescription(new RTCSessionDescription(data.offer));
         await processQueuedCandidates();
 
@@ -212,16 +229,18 @@ export const Dashboard: React.FC = () => {
         break;
       }
 
+      case 'candidate':
       case 'ice-candidate': {
-        if (data.candidate) {
+        const candidateData = data.candidate || data;
+        if (candidateData) {
           if (peerConnectionRef.current && peerConnectionRef.current.remoteDescription) {
             try {
-              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidateData));
             } catch (e) {
               console.error('Error adding ICE candidate:', e);
             }
           } else {
-            iceCandidatesQueue.current.push(data.candidate);
+            iceCandidatesQueue.current.push(candidateData);
           }
         }
         break;
@@ -234,7 +253,7 @@ export const Dashboard: React.FC = () => {
       default:
         break;
     }
-  }, [createPeerConnection, sendSignal, handlePeerDisconnected]);
+  }, [startLocalCamera, createPeerConnection, sendSignal, handlePeerDisconnected, processQueuedCandidates]);
 
   const connectPresenceWS = useCallback(() => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
@@ -247,13 +266,15 @@ export const Dashboard: React.FC = () => {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      if (locationState?.activeCallId || locationState?.autoConnectPeerId) {
+      const targetRoomId = locationState?.roomId || locationState?.activeCallId;
+      if (targetRoomId) {
         setIsConnectedToPeer(true);
-        if (locationState.peerName) setPeerName(locationState.peerName);
+        if (locationState?.peerName) setPeerName(locationState.peerName);
         ws.send(JSON.stringify({
           type: 'init_direct_call',
-          callId: locationState.activeCallId,
-          peerId: locationState.autoConnectPeerId
+          roomId: targetRoomId,
+          callId: locationState?.activeCallId,
+          peerId: locationState?.autoConnectPeerId
         }));
       }
     };
@@ -272,17 +293,18 @@ export const Dashboard: React.FC = () => {
     };
   }, [filters.targetType, handleSignalingMessage, locationState]);
 
-  // إرسال إشارة الاتصال المباشر فور فتح الـ WebSocket إذا أتى المستخدم محولاً من البروفايل
   useEffect(() => {
-    if (locationState?.activeCallId || locationState?.autoConnectPeerId) {
+    const targetRoomId = locationState?.roomId || locationState?.activeCallId;
+    if (targetRoomId) {
       setIsConnectedToPeer(true);
-      if (locationState.peerName) setPeerName(locationState.peerName);
+      if (locationState?.peerName) setPeerName(locationState.peerName);
 
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'init_direct_call',
-          callId: locationState.activeCallId,
-          peerId: locationState.autoConnectPeerId
+          roomId: targetRoomId,
+          callId: locationState?.activeCallId,
+          peerId: locationState?.autoConnectPeerId
         }));
       }
     }
