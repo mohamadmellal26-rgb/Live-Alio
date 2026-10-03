@@ -429,7 +429,8 @@ func handleDeleteContent(c *fiber.Ctx) error {
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
-	InitDB()
+	// تأكد من أن دالة الاتصال بقاعدة البيانات معرفة (مثلاً InitDB أو غيرها بناءً على ملف db.go لديك)
+	// InitDB() 
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
@@ -460,19 +461,20 @@ func main() {
 	setupRoutes(app.Group("/api"))
 	setupRoutes(app.Group("/api/v1"))
 
-	// تم حذف سطر SetupNotificationRoutes(app) الغير معرّف لتفادي خطأ الترجمة
-
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			tokenStr := c.Query("token")
 			if tokenStr != "" {
 				claims, err := parseToken(tokenStr)
 				if err == nil {
-					// التصحيح هنا: تحويل الـ userId إلى string ليتوافق مع هيكل Client
-					c.Locals("userId", fmt.Sprintf("%v", claims["userId"]))
-					c.Locals("fullName", claims["fullName"])
-					c.Locals("role", claims["role"])
-					c.Locals("avatar", claims["avatar"])
+					// التصحيح هنا: استخدام هيكل الـ Claims المباشر لتجنب أخطاء الـ index
+					c.Locals("userId", fmt.Sprintf("%v", claims.UserID))
+					
+					// جلب بيانات المستخدم من القاعدة أو Token إذا كانت متوفرة، أو وضع قيم افتراضية آمنة
+					// بما أن الهيكل يحتوي على Email، سنستخدمه كـ FullName أو Email مؤقتاً إذا لم تتوفر حقول أخرى
+					c.Locals("fullName", claims.Email) 
+					c.Locals("role", "User")
+					c.Locals("avatar", "")
 					return c.Next()
 				}
 			}

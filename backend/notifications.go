@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 
@@ -12,15 +13,15 @@ import (
 
 // PitchNotification هيكل بيانات طلبات الاتصال والإشعارات المباشرة
 type PitchNotification struct {
-	Type           string `json:"type"`                     // "pitch_request", "pitch_response", "pitch_cancel"
+	Type           string `json:"type"` // "pitch_request", "pitch_response", "pitch_cancel"
 	NotificationID string `json:"notificationId,omitempty"`
 	FromUserID     string `json:"fromUserId"`
 	FromUserName   string `json:"fromUserName"`
 	FromAvatar     string `json:"fromAvatar,omitempty"`
 	ToUserID       string `json:"toUserId"`
-	Note           string `json:"note,omitempty"`           // ملخص العرض أو الرسالة
-	Accepted       bool   `json:"accepted,omitempty"`       // حالة القبول أو الرفض
-	RoomID         string `json:"roomId,omitempty"`         // معرف الغرفة عند القبول
+	Note           string `json:"note,omitempty"`     // ملخص العرض أو الرسالة
+	Accepted       bool   `json:"accepted,omitempty"` // حالة القبول أو الرفض
+	RoomID         string `json:"roomId,omitempty"`   // معرف الغرفة عند القبول
 }
 
 // NotificationClient يمثل العميل المتصل المخصص لاستقبال الإشعارات
@@ -194,7 +195,7 @@ func (nh *NotificationHub) HandleIncomingNotification(sender *NotificationClient
 	}
 }
 
-// SetupNotificationRoutes تسجيل مسارات الـ HTTP و ה- WebSocket للإشعارات
+// SetupNotificationRoutes تسجيل مسارات الـ HTTP والـ WebSocket للإشعارات
 func SetupNotificationRoutes(app *fiber.App) {
 	app.Use("/ws/notifications", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -202,11 +203,12 @@ func SetupNotificationRoutes(app *fiber.App) {
 			if tokenStr != "" {
 				claims, err := parseToken(tokenStr)
 				if err == nil {
-					if uID, ok := claims["userId"].(string); ok && uID != "" {
-						c.Locals("userId", uID)
+					// التعديل هنا ليتوافق مع هيكل الـ Claims الجديد (Struct)
+					if claims.UserID != 0 {
+						c.Locals("userId", fmt.Sprintf("%v", claims.UserID))
 					}
-					if name, ok := claims["fullName"].(string); ok && name != "" {
-						c.Locals("fullName", name)
+					if claims.Email != "" {
+						c.Locals("fullName", claims.Email)
 					}
 					return c.Next()
 				}
@@ -215,7 +217,13 @@ func SetupNotificationRoutes(app *fiber.App) {
 			userID := c.Query("userId")
 			if userID != "" {
 				c.Locals("userId", userID)
-				c.Locals("fullName", c.Query("userName", "User_"+userID[:5]))
+				fallbackName := "User_"
+				if len(userID) >= 5 {
+					fallbackName += userID[:5]
+				} else {
+					fallbackName += userID
+				}
+				c.Locals("fullName", c.Query("userName", fallbackName))
 				return c.Next()
 			}
 
