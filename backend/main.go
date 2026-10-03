@@ -64,7 +64,9 @@ func (c *Client) Close() {
 	defer c.mu.Unlock()
 	if !c.isClosed {
 		c.isClosed = true
-		close(c.sendChan)
+		if c.sendChan != nil {
+			close(c.sendChan)
+		}
 	}
 }
 
@@ -95,7 +97,7 @@ func newHub() *Hub {
 	}
 }
 
-func (h *Hub) BroadcastOnlineCount() {
+func (h *Hub) BroadcastOnlineCountUnlocked() {
 	count := len(h.clients)
 	msg, _ := json.Marshal(map[string]interface{}{
 		"type":  "online_count",
@@ -111,7 +113,7 @@ func (h *Hub) RegisterClient(client *Client) {
 	h.mu.Lock()
 	h.clients[client.ID] = client
 	log.Printf("Client registered: %s (%s, UserID: %s)", client.ID, client.FullName, client.UserID)
-	h.BroadcastOnlineCount()
+	h.BroadcastOnlineCountUnlocked()
 	h.mu.Unlock()
 }
 
@@ -338,6 +340,8 @@ func (h *Hub) pairClientsUnlocked(c1, c2 *Client) {
 
 func (h *Hub) UnregisterClient(client *Client) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	delete(h.clients, client.ID)
 
 	if client.RoomID != "" && h.rooms[client.RoomID] != nil {
@@ -361,11 +365,12 @@ func (h *Hub) UnregisterClient(client *Client) {
 			"message": "Partner left the stream",
 		})
 		peer.SafeWrite(disconnectMsg)
+		
+		// إعادة مطابقة القرين بأمان
 		h.matchClientUnlocked(peer)
 	}
 
-	h.BroadcastOnlineCount()
-	h.mu.Unlock()
+	h.BroadcastOnlineCountUnlocked()
 }
 
 func (h *Hub) ForwardSignalToRoom(sender *Client, rawMsg []byte) {
@@ -436,7 +441,6 @@ func handleDeleteContent(c *fiber.Ctx) error {
 func main() {
 	_ = os.MkdirAll("./uploads", os.ModePerm)
 
-	// تهيئة قاعدة البيانات واتصالها لمنع حدوث خطأ الاتصال وتفعيل الجداول
 	InitDB()
 
 	app := fiber.New(fiber.Config{
@@ -446,18 +450,18 @@ func main() {
 
 	app.Use(logger.New())
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
-	}))
+        AllowOrigins: "*",
+        AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+        AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
+    }))
 
 	app.Static("/uploads", "./uploads")
 
 	hub := newHub()
 
 	setupRoutes := func(router fiber.Router) {
-		router.Get("/user/profile", handleGetUserProfile) // للحساب الشخصي الحالي
-		router.Get("/user/:id", handleGetUserByID)         // لزيارة بروفايل أي شخص بالـ ID
+		router.Get("/user/profile", handleGetUserProfile)
+		router.Get("/user/:id", handleGetUserByID)
 		router.Put("/user/profile", handleUpdateUserProfile)
 		router.Post("/signup", handleSignup)
 		router.Post("/login", handleLogin)
@@ -521,7 +525,10 @@ func main() {
 
 		hub.RegisterClient(client)
 
+		// الـ Writer Goroutine
+		done := make(chan struct{})
 		go func() {
+			defer close(done)
 			for msg := range client.sendChan {
 				if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
 					break
@@ -533,6 +540,7 @@ func main() {
 			hub.UnregisterClient(client)
 			client.Close()
 			c.Close()
+			<-done // انتظار انتهاء الـ writer goroutine بأمان
 		}()
 
 		for {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Zap, 
   Globe, 
@@ -48,8 +48,11 @@ export interface CallRequestData {
 
 export const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const params = useParams<{ username?: string; id?: string }>();
-  const pathIdentifier = params.username || params.id;
+
+  // استخراج المعرف مباشرة من البارامترات
+  const pathIdentifier = params.id || params.username;
 
   const [searchParams] = useSearchParams();
   const queryUsername = searchParams.get('user') || searchParams.get('profile') || searchParams.get('identifier');
@@ -67,15 +70,17 @@ export const ProfilePage: React.FC = () => {
     return null;
   });
 
-  // تحديد المعرف المستهدف (يعمل للعامة وبدون الحاجة لتسجيل الدخول)
+  // تحديد المعرف المستهدف بدقة
   const targetIdentifierRaw = pathIdentifier || queryUsername;
+  const isExactSelfProfileRoute = location.pathname.replace(/\/+$/, '') === '/profile';
+  
   const targetUsername = targetIdentifierRaw || (
-    window.location.pathname === '/profile' && (currentUser?.username || currentUser?.id || currentUser?.ID) 
-      ? String(currentUser.username || currentUser.id || currentUser.ID) 
+    isExactSelfProfileRoute && currentUser 
+      ? String(currentUser.id || currentUser.ID || currentUser.username) 
       : undefined
   );
 
-  // جلب بيانات البروفايل للجميع سواء بوجود توكين أو بدونه
+  // جلب بيانات البروفايل بناءً على المعرف المستهدف
   const { data, isLoading, error, refetch } = useUserProfile(targetUsername) as any;
 
   const [localProfile, setLocalProfile] = useState<any>(null);
@@ -124,20 +129,23 @@ export const ProfilePage: React.FC = () => {
     return `${cleanBase}/${cleanPath}`;
   }, []);
 
+  // تحديث البروفايل المحلي فور استلام البيانات الجديدة
   useEffect(() => {
     if (data) {
       const extractedUser = data.user || data.profile || data.data || data;
       setLocalProfile(extractedUser);
+    } else {
+      setLocalProfile(null);
     }
-  }, [data]);
+  }, [data, targetUsername]);
 
   const user = localProfile;
 
+  // مزامنة قائمة المحتوى القادمة من الـ API
   useEffect(() => {
-    if (data?.contents) {
-      setContentList(data.contents);
-    } else if (data?.profile?.contents) {
-      setContentList(data.profile.contents);
+    const rawContents = data?.contents || data?.profile?.contents || data?.data?.contents;
+    if (Array.isArray(rawContents)) {
+      setContentList(rawContents);
     }
   }, [data]);
 
@@ -153,7 +161,7 @@ export const ProfilePage: React.FC = () => {
     setImgError(false);
   }, [avatarSrc, targetUsername]);
 
-  // الاتصال بـ WebSocket فقط إذا كان المستخدم مسجل الدخول
+  // الاتصال بـ WebSocket
   useEffect(() => {
     if (!token) return;
 
@@ -232,13 +240,12 @@ export const ProfilePage: React.FC = () => {
   const { primaryColor = '#e056fd' } = data || {};
   const targetUserId = String(user.id || user.ID || user._id || '');
 
-  // التحقق من الصلاحية: فقط إذا كان التوكين موجود والمستخدم صاحب الحساب
   const isOwner = Boolean(
-    token && currentUser && (
+    token && currentUser && targetUserId && (
       (currentUser.id && String(currentUser.id) === targetUserId) ||
       (currentUser.ID && String(currentUser.ID) === targetUserId) ||
-      (currentUser.username && targetUsername && currentUser.username.toLowerCase() === targetUsername.toLowerCase()) ||
-      (currentUser.email && (user.email || user.Email) && (currentUser.email.toLowerCase() === (user.email || user.Email).toLowerCase()))
+      (currentUser._id && String(currentUser._id) === targetUserId) ||
+      (currentUser.username && targetUsername && currentUser.username.toLowerCase() === targetUsername.toLowerCase())
     )
   );
 
@@ -319,23 +326,26 @@ export const ProfilePage: React.FC = () => {
       }
 
       const result = await response.json();
-      const createdItem: ContentItem = result.content ? {
-        id: result.content.id,
-        title: result.content.title,
-        type: result.content.type,
-        mediaUrl: result.content.url,
-        description: newContent.description,
-        externalLink: newContent.externalLink
-      } : {
-        id: String(Date.now()),
-        title: newContent.title,
-        description: newContent.description,
-        type: newContent.type,
-        externalLink: newContent.externalLink,
-        mediaUrl: newContent.mediaFile ? URL.createObjectURL(newContent.mediaFile) : undefined
+      
+      // استخراج الكائن المرفوع باختلاف الاستجابة من الباك إند
+      const rawItem = result.content || result.data || result;
+      const createdItem: ContentItem = {
+        id: String(rawItem.id || rawItem._id || Date.now()),
+        title: rawItem.title || newContent.title,
+        type: rawItem.type || newContent.type,
+        mediaUrl: rawItem.mediaUrl || rawItem.url || (newContent.mediaFile ? URL.createObjectURL(newContent.mediaFile) : undefined),
+        description: rawItem.description || newContent.description,
+        externalLink: rawItem.externalLink || newContent.externalLink
       };
 
+      // تحديث الواجهة فوراً
       setContentList((prev) => [createdItem, ...prev]);
+
+      // إعادة الاستعلام من الـ API لمنع التضارب وضمان مزامنة البيانات
+      if (typeof refetch === 'function') {
+        refetch();
+      }
+
       setShowAddContentModal(false);
       setNewContent({
         title: '',
@@ -667,7 +677,7 @@ export const ProfilePage: React.FC = () => {
               </div>
 
               <div>
-                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Media File (Video/Img)</label>
+                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Media File (Video/Img)</label>
                 <input 
                   type="file" 
                   accept="video/*,image/*"

@@ -17,7 +17,6 @@ func InitDB() *gorm.DB {
 	}
 
 	var err error
-	// تم إضافة PrepareStmt: false لتجنب مشكلة تخزين خطط الاستعلامات المؤقتة
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 		PrepareStmt: false,
 	})
@@ -25,7 +24,8 @@ func InitDB() *gorm.DB {
 		log.Fatalf("Failed to connect to PostgreSQL database: %v", err)
 	}
 
-	err = DB.AutoMigrate(&User{})
+	// تأكد من إضافة جميع الـ Structs المرتطبة بالداتا بيز هنا
+	err = DB.AutoMigrate(&User{}, &Content{}) 
 	if err != nil {
 		log.Fatalf("Failed to auto-migrate database schema: %v", err)
 	}

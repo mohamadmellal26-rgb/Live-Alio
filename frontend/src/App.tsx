@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import './App.css';
+
+// ملاحظة: تأكد من اسم المجلد إذا كان component أو compnent
 import Header from './compnent/header';
 import HeroSection from './compnent/hirosenction';
 import Footer from './compnent/Footer';
@@ -115,6 +117,7 @@ const AppContent: React.FC = () => {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
+      wsRef.current = null;
     };
   }, [token, navigate, updateFaviconWithGreenDot]);
 
@@ -155,9 +158,7 @@ const AppContent: React.FC = () => {
           <Route path="/" element={<HeroSection />} />
           <Route path="/login" element={<Login />} />
           <Route path="/Dashboard" element={<Dashboard />} />
-          {/* البروفايل الشخصي بدون معرف */}
-          <Route path="/profile" element={<Profile />} />
-          {/* البروفايل المخصص سواء بواسطة ID أو Username */}
+          {/* البروفايل المخصص لأي مستخدم سواء عن طريق ID أو Username */}
           <Route path="/profile/:id" element={<Profile />} />
         </Routes>
       </main>
