@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import './App.css';
 import Header from './compnent/header';
@@ -9,7 +9,6 @@ import Dashboard from './compnent/Dashboard';
 import Profile from './compnent/Profile';
 import LiveCallNotification, { type CallRequestData } from './compnent/LiveCallNotification';
 
-// مكون داخلي لاستخدام الموجه useNavigate داخل الـ Router
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const [incomingCall, setIncomingCall] = useState<CallRequestData | null>(null);
@@ -17,7 +16,54 @@ const AppContent: React.FC = () => {
 
   const token = localStorage.getItem('token');
 
-  // إقامة اتصال WebSocket عام على مستوى التطبيق بأكمله
+  // دالة تحديث أيقونة الموقع (Favicon) ديناميكياً وإضافة/إزالة النقطة الخضراء
+  const updateFaviconWithGreenDot = useCallback((showDot: boolean) => {
+    const favicon = document.querySelector<HTMLLinkElement>("link[rel*='icon']");
+    if (!favicon) return;
+
+    if (!showDot) {
+      favicon.href = '/logo.png';
+      return;
+    }
+
+    const img = new Image();
+    img.src = '/logo.png';
+    img.crossOrigin = 'anonymous';
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const size = 64;
+      canvas.width = size;
+      canvas.height = size;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // 1. رسم الشعار الأصلي
+      ctx.drawImage(img, 0, 0, size, size);
+
+      // 2. إعدادات النقطة الخضراء في أعلى اليمين
+      const dotRadius = 10;
+      const dotX = size - dotRadius - 2;
+      const dotY = dotRadius + 2;
+
+      // رسم إطار أبيض عازل
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, dotRadius + 2, 0, 2 * Math.PI);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+
+      // رسم النقطة الخضراء
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, dotRadius, 0, 2 * Math.PI);
+      ctx.fillStyle = '#22c55e';
+      ctx.fill();
+
+      // 3. تطبيق الصورة الجديدة للـ Favicon
+      favicon.href = canvas.toDataURL('image/png');
+    };
+  }, []);
+
   useEffect(() => {
     if (!token) return;
 
@@ -29,19 +75,23 @@ const AppContent: React.FC = () => {
       try {
         const message = JSON.parse(event.data);
 
-        // استقبال طلب الاتصال الوارد في أي مكان
         if (message.type === 'incoming_call_request') {
           setIncomingCall({
             id: message.callId,
             callerName: message.callerName || 'Unknown User',
             callerRole: message.callerRole,
             callerAvatarUrl: message.callerAvatarUrl,
-            note: message.note || 'مرحباً، يرغب هذا المستخدم بالاتصال بك مباشرة!'
+            note: message.note || 'Hello! This user wants to start a direct call with you.'
           });
+
+          // تفعيل النقطة الخضراء على أيقونة التبويب
+          updateFaviconWithGreenDot(true);
         }
 
-        // عند قبول الاتصال من الطرف الآخر أثناء الانتظار
         if (message.type === 'call_accepted') {
+          // إزالة النقطة الخضراء
+          updateFaviconWithGreenDot(false);
+
           navigate('/Dashboard', { 
             state: { 
               roomId: message.callId, 
@@ -51,9 +101,10 @@ const AppContent: React.FC = () => {
           });
         }
 
-        // عند رفض الطلب
         if (message.type === 'call_declined') {
-          alert(message.message || 'تم رفض طلب الاتصال من قبل المستلم.');
+          // إزالة النقطة الخضراء
+          updateFaviconWithGreenDot(false);
+          alert(message.message || 'Call was declined by the user.');
         }
       } catch (err) {
         console.error('Error parsing Global WS message:', err);
@@ -65,7 +116,7 @@ const AppContent: React.FC = () => {
         ws.close();
       }
     };
-  }, [token, navigate]);
+  }, [token, navigate, updateFaviconWithGreenDot]);
 
   const handleAcceptCall = (requestId: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -75,8 +126,10 @@ const AppContent: React.FC = () => {
       }));
     }
     const callerName = incomingCall?.callerName || 'Partner';
+
+    // إعادة الأيقونة لحالتها الأصلية عند القبول
+    updateFaviconWithGreenDot(false);
     setIncomingCall(null);
-    // التوجيه الفوري للداشبورد لبدء المحادثة المرئية
     navigate('/Dashboard', { state: { roomId: requestId, activeCallId: requestId, peerName: callerName } });
   };
 
@@ -87,6 +140,9 @@ const AppContent: React.FC = () => {
         callId: requestId
       }));
     }
+
+    // إعادة الأيقونة لحالتها الأصلية عند الرفض
+    updateFaviconWithGreenDot(false);
     setIncomingCall(null);
   };
 
@@ -106,7 +162,6 @@ const AppContent: React.FC = () => {
 
       <Footer />
 
-      {/* الإشعار متاح الآن شمولياً في جميع الصفحات */}
       <LiveCallNotification 
         request={incomingCall}
         onAccept={handleAcceptCall}

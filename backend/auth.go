@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,27 +18,30 @@ import (
 
 var jwtSecret = []byte("super_secret_live_aleo_key_2026")
 
-// نموذج المستخدم في قاعدة البيانات
+// DB متغير الجلسة لقاعدة البيانات
+var DB *gorm.DB
+
+// User نموذج المستخدم في قاعدة البيانات
 type User struct {
-	ID             string   `gorm:"primaryKey;type:uuid" json:"id"`
-	FullName       string   `gorm:"not null" json:"fullName"`
-	Email          string   `gorm:"uniqueIndex;not null" json:"email"`
-	Password       string   `gorm:"not null" json:"-"`
-	Role           string   `gorm:"default:'user'" json:"role"`
-	Avatar         string   `json:"avatarUrl,omitempty"`
-	Bio            string   `json:"bio,omitempty"`
-	Location       string   `json:"location,omitempty"`
-	Website        string   `json:"website,omitempty"`
-	TargetIndustry string   `json:"targetIndustry,omitempty"`
-	Skills         []string `gorm:"serializer:json" json:"skills,omitempty"`
-	FocusAreas     []string `gorm:"serializer:json" json:"focusAreas,omitempty"`
-	IsVerified     bool     `gorm:"default:true" json:"isVerified"`
-	JoinedDate     string   `json:"joinedDate"`
-	YoutubeUrl     string   `json:"youtubeUrl,omitempty"`
-	PyCardId       string   `json:"pyCardId,omitempty"`
-	ProjectProof   string   `json:"projectProof,omitempty"`
-	CreatedAt      time.Time`json:"createdAt"`
-	UpdatedAt      time.Time`json:"updatedAt"`
+	ID             string    `gorm:"primaryKey;type:uuid" json:"id"`
+	FullName       string    `gorm:"not null" json:"fullName"`
+	Email          string    `gorm:"uniqueIndex;not null" json:"email"`
+	Password       string    `gorm:"not null" json:"-"`
+	Role           string    `gorm:"default:'user'" json:"role"`
+	Avatar         string    `json:"avatarUrl,omitempty"`
+	Bio            string    `json:"bio,omitempty"`
+	Location       string    `json:"location,omitempty"`
+	Website        string    `json:"website,omitempty"`
+	TargetIndustry string    `json:"targetIndustry,omitempty"`
+	Skills         []string  `gorm:"serializer:json" json:"skills,omitempty"`
+	FocusAreas     []string  `gorm:"serializer:json" json:"focusAreas,omitempty"`
+	IsVerified     bool      `gorm:"default:true" json:"isVerified"`
+	JoinedDate     string    `json:"joinedDate"`
+	YoutubeUrl     string    `json:"youtubeUrl,omitempty"`
+	PyCardId       string    `json:"pyCardId,omitempty"`
+	ProjectProof   string    `json:"projectProof,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type RegisterRequest struct {
@@ -55,12 +60,12 @@ type LoginRequest struct {
 
 func generateToken(user *User) (string, error) {
 	claims := jwt.MapClaims{
-		"userId":   user.ID,
-		"email":    user.Email,
-		"fullName": user.FullName,
-		"role":     user.Role,
-		"avatar":   user.Avatar,
-		"exp":      time.Now().Add(time.Hour * 72).Unix(),
+		"userId":    user.ID,
+		"email":     user.Email,
+		"fullName":  user.FullName,
+		"role":      user.Role,
+		"avatarUrl": user.Avatar,
+		"exp":       time.Now().Add(time.Hour * 72).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret)
@@ -86,9 +91,14 @@ func saveUploadedFile(c *fiber.Ctx, formKey string) (string, error) {
 		return "", nil
 	}
 
+	uploadDir := "./uploads"
+	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+		return "", err
+	}
+
 	ext := filepath.Ext(file.Filename)
 	filename := fmt.Sprintf("%s_%d%s", uuid.New().String(), time.Now().UnixNano(), ext)
-	savePath := filepath.Join("./uploads", filename)
+	savePath := filepath.Join(uploadDir, filename)
 
 	if err := c.SaveFile(file, savePath); err != nil {
 		return "", err
@@ -97,7 +107,7 @@ func saveUploadedFile(c *fiber.Ctx, formKey string) (string, error) {
 	return "/uploads/" + filename, nil
 }
 
-// Handler لإنشاء حساب جديد وتخزينه في PostgreSQL
+// handleSignup لإنشاء حساب جديد وتخزينه في قاعدة البيانات
 func handleSignup(c *fiber.Ctx) error {
 	var req RegisterRequest
 
@@ -120,7 +130,6 @@ func handleSignup(c *fiber.Ctx) error {
 		req.Role = "user"
 	}
 
-	// التحقق من وجود الإيميل مسبقاً من قاعدة البيانات
 	var existingUser User
 	if err := DB.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
 		return c.Status(400).JSON(fiber.Map{"error": "Email already exists"})
@@ -149,7 +158,6 @@ func handleSignup(c *fiber.Ctx) error {
 		ProjectProof: proofPath,
 	}
 
-	// حفظ المستخدم في قاعدة البيانات PostgreSQL
 	if err := DB.Create(&newUser).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to create user in database"})
 	}
@@ -165,7 +173,7 @@ func handleSignup(c *fiber.Ctx) error {
 	})
 }
 
-// Handler لتسجيل الدخول باستعلام PostgreSQL
+// handleLogin لتسجيل الدخول
 func handleLogin(c *fiber.Ctx) error {
 	var req LoginRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -197,7 +205,7 @@ func handleLogin(c *fiber.Ctx) error {
 	})
 }
 
-// Handler لجلب البروفايل من قاعدة البيانات
+// handleGetUserProfile لجلب البروفايل من قاعدة البيانات
 func handleGetUserProfile(c *fiber.Ctx) error {
 	identifier := strings.TrimSpace(c.Query("identifier"))
 	if identifier == "" {
@@ -238,5 +246,79 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 		"profile":      foundUser,
 		"contents":     []interface{}{},
 		"primaryColor": "#e056fd",
+	})
+}
+
+// handleUpdateUserProfile لتحديث البيانات الشخصية وصورة الحساب
+func handleUpdateUserProfile(c *fiber.Ctx) error {
+	authHeader := c.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return c.Status(401).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := parseToken(tokenStr)
+	if err != nil {
+		return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
+	}
+
+	userID, ok := claims["userId"].(string)
+	if !ok || userID == "" {
+		return c.Status(401).JSON(fiber.Map{"error": "Invalid token payload"})
+	}
+
+	var user User
+	if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
+		return c.Status(4404).JSON(fiber.Map{"error": "User not found"})
+	}
+
+	// استخراج البيانات النصية المرسلة عبر FormData
+	if fullName := c.FormValue("fullName"); fullName != "" {
+		user.FullName = fullName
+	}
+	if role := c.FormValue("role"); role != "" {
+		user.Role = role
+	}
+	if bio := c.FormValue("bio"); bio != "" {
+		user.Bio = bio
+	}
+	if location := c.FormValue("location"); location != "" {
+		user.Location = location
+	}
+	if website := c.FormValue("website"); website != "" {
+		user.Website = website
+	}
+	if targetIndustry := c.FormValue("targetIndustry"); targetIndustry != "" {
+		user.TargetIndustry = targetIndustry
+	}
+
+	// معالجة مصفوفة Skills المرسلة كـ JSON String
+	if skillsRaw := c.FormValue("skills"); skillsRaw != "" {
+		var parsedSkills []string
+		if err := json.Unmarshal([]byte(skillsRaw), &parsedSkills); err == nil {
+			user.Skills = parsedSkills
+		}
+	}
+
+	// معالجة مصفوفة FocusAreas المرسلة كـ JSON String
+	if focusRaw := c.FormValue("focusAreas"); focusRaw != "" {
+		var parsedFocus []string
+		if err := json.Unmarshal([]byte(focusRaw), &parsedFocus); err == nil {
+			user.FocusAreas = parsedFocus
+		}
+	}
+
+	// حفظ الصورة الجديدة إن وُجدت
+	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
+		user.Avatar = avatarPath
+	}
+
+	if err := DB.Save(&user).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to update profile"})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Profile updated successfully",
+		"user":    user,
 	})
 }

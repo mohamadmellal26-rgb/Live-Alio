@@ -375,6 +375,25 @@ func (h *Hub) UnregisterClient(client *Client) {
 	h.mu.Unlock()
 }
 
+// ForwardSignalToRoom لتمرير مصفوفات WebSockets داخل نفس الغرفة فورياً
+func (h *Hub) ForwardSignalToRoom(sender *Client, rawMsg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if sender.RoomID == "" {
+		return
+	}
+
+	room, exists := h.rooms[sender.RoomID]
+	if exists {
+		for id, client := range room {
+			if id != sender.ID {
+				client.SafeWrite(rawMsg)
+			}
+		}
+	}
+}
+
 func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 	result := make([]*Client, 0, len(slice))
 	for _, c := range slice {
@@ -392,24 +411,35 @@ func main() {
 
 	app := fiber.New(fiber.Config{
 		AppName:   "Live-Aleo Backend",
-		BodyLimit: 20 * 1024 * 1024,
+		BodyLimit: 50 * 1024 * 1024, // زيادة سعة الرفع للملفات الكبيرة
 	})
 
 	app.Use(logger.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
 
 	app.Static("/uploads", "./uploads")
 
 	hub := newHub()
 
-	api := app.Group("/api/v1")
+	// تسجيل مسارات الـ API (توافق مزدوج لضمان عمل الفرانك إند)
+	setupRoutes := func(router fiber.Router) {
+		router.Get("/user/profile", handleGetUserProfile)
+		router.Put("/user/profile", handleUpdateUserProfile)
+		router.Post("/signup", handleSignup)
+		router.Post("/login", handleLogin)
 
-	api.Get("/user/profile", handleGetUserProfile)
-	api.Post("/signup", handleSignup)
-	api.Post("/login", handleLogin)
+		// مسارات إضافة وحذف المحتوى والـ Demos
+		router.Post("/content/upload", handleUploadContent)
+		router.Delete("/content/:id", handleDeleteContent)
+	}
+
+	// مسارات مباشر وبسابقة /api
+	setupRoutes(app.Group("/api"))
+	setupRoutes(app.Group("/api/v1"))
 
 	SetupNotificationRoutes(app)
 
@@ -506,7 +536,7 @@ func main() {
 				case "leave":
 					hub.mu.Lock()
 					if client.Peer != nil {
-						peer := client.Peer
+                        peer := client.Peer
 						peer.Peer = nil
 						peer.RoomID = ""
 
@@ -523,12 +553,16 @@ func main() {
 				}
 			}
 
-			client.mu.Lock()
+			// توجيه إشارات WebRTC للقرين المباشر أو لأعضاء الغرفة المباشرة
+			hub.mu.Lock()
 			peer := client.Peer
-			client.mu.Unlock()
+			roomID := client.RoomID
+			hub.mu.Unlock()
 
 			if peer != nil {
 				peer.SafeWrite(message)
+			} else if roomID != "" {
+				hub.ForwardSignalToRoom(client, message)
 			}
 		}
 	}))

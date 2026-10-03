@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   ChevronDown, 
@@ -17,6 +17,8 @@ import {
   User as UserIcon
 } from 'lucide-react';
 import './header.css';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
 
 interface EventItem {
   id: number;
@@ -80,8 +82,9 @@ export const Header: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLDivElement>(null);
 
-  // حالة المستخدم
+  // حالة المستخدم وإدارة صورة الحساب
   const [user, setUser] = useState<any>(null);
+  const [imgError, setImgError] = useState(false);
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -94,6 +97,17 @@ export const Header: React.FC = () => {
   const [secondsLeft, setSecondsLeft] = useState<number>(0);
 
   const currentEvent = EVENTS_DATA[currentEventIndex];
+
+  // دالة بناء رابط الصورة بشكل مطلق وآمن
+  const getFullImageUrl = useCallback((path?: string) => {
+    if (!path) return null;
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:image/')) {
+      return path;
+    }
+    const cleanBase = API_BASE_URL.replace(/\/+$/, '');
+    const cleanPath = path.replace(/^\/+/, '');
+    return `${cleanBase}/${cleanPath}`;
+  }, []);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -150,6 +164,15 @@ export const Header: React.FC = () => {
   };
 
   const timeObj = formatTime(secondsLeft);
+
+  // استخراج المسار الصحيح لصورة المستخدم عبر الحقول المحتملة
+  const rawAvatarPath = user?.avatarUrl || user?.avatar || user?.profilePicture;
+  const avatarSrc = getFullImageUrl(rawAvatarPath);
+
+  // إعادة ضبط خطأ الصورة عند تغير المستخدم
+  useEffect(() => {
+    setImgError(false);
+  }, [avatarSrc]);
 
   // تحديد مسار الملف الشخصي للمستخدم الحالي
   const profilePath = user?.username 
@@ -441,12 +464,18 @@ export const Header: React.FC = () => {
                     color: '#ffffff',
                     cursor: 'pointer',
                     overflow: 'hidden',
+                    padding: 0,
                     transition: 'border-color 0.2s'
                   }}
                   title={user.fullName || user.email || 'User Profile'}
                 >
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  {avatarSrc && !imgError ? (
+                    <img 
+                      src={avatarSrc} 
+                      alt="Profile" 
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                      onError={() => setImgError(true)}
+                    />
                   ) : (
                     <UserIcon size={20} />
                   )}
