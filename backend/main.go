@@ -14,7 +14,32 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
+
+// DB instance
+var DB *gorm.DB
+
+// User Model المحدث ليتوافق مع الحقول الإضافية (يوتيوبر ومستثمر)
+type User struct {
+	ID             uint           `gorm:"primaryKey;autoIncrement" json:"id"`
+	FullName       string         `json:"fullName"`
+	Email          string         `json:"email" gorm:"unique;index"`
+	Password       string         `json:"-"`
+	Role           string         `json:"role"`
+	Avatar         string         `json:"avatar"`
+	Bio            string         `json:"bio"`
+	Location       string         `json:"location"`
+	Website        string         `json:"website"`
+	TargetIndustry string         `json:"targetIndustry"`
+	YoutubeUrl     string         `json:"youtubeUrl"`     // مخصص لليوتيوبر
+	PyCardId       string         `json:"pyCardId"`       // مخصص للمستثمر
+	ProjectProof   string         `json:"projectProof"`   // مسار ملف إثبات المشروع (PDF) للمستثمر
+	Skills         []string       `json:"skills" gorm:"serializer:json"`
+	FocusAreas     []string       `json:"focusAreas" gorm:"serializer:json"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
+}
 
 type SignalMessage struct {
 	Type            string      `json:"type"`
@@ -396,80 +421,6 @@ func removeClientFromSlice(slice []*Client, target *Client) []*Client {
 	return result
 }
 
-func handleSignup(c *fiber.Ctx) error {
-	fullName := c.FormValue("fullName")
-	if fullName == "" {
-		var body map[string]interface{}
-		if err := c.BodyParser(&body); err == nil {
-			if fn, ok := body["fullName"].(string); ok {
-				fullName = fn
-			}
-		}
-	}
-
-	email := c.FormValue("email")
-	role := c.FormValue("role")
-	if role == "" {
-		role = "user"
-	}
-
-	var avatarUrl string
-	file, err := c.FormFile("avatar")
-	if err == nil && file != nil {
-		filename := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(file.Filename))
-		savePath := filepath.Join("./uploads", filename)
-		if err := c.SaveFile(file, savePath); err == nil {
-			avatarUrl = "/uploads/" + filename
-		}
-	}
-
-	fakeToken := uuid.New().String()
-
-	return c.Status(201).JSON(fiber.Map{
-		"token": fakeToken,
-		"user": fiber.Map{
-			"id":       uuid.New().String(),
-			"fullName": fullName,
-			"email":    email,
-			"role":     role,
-			"avatar":   avatarUrl,
-		},
-	})
-}
-
-func handleLogin(c *fiber.Ctx) error {
-	var body map[string]interface{}
-	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
-	}
-
-	email, _ := body["email"].(string)
-	fakeToken := uuid.New().String()
-
-	return c.JSON(fiber.Map{
-		"token": fakeToken,
-		"user": fiber.Map{
-			"id":       uuid.New().String(),
-			"fullName": "User",
-			"email":    email,
-			"role":     "user",
-			"avatar":   "",
-		},
-	})
-}
-
-func handleGetUserProfile(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "success",
-	})
-}
-
-func handleUpdateUserProfile(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "updated",
-	})
-}
-
 func handleUploadContent(c *fiber.Ctx) error {
 	file, err := c.FormFile("file")
 	var filePath string
@@ -505,18 +456,6 @@ func handleDeleteContent(c *fiber.Ctx) error {
 		"message":   "Content deleted successfully",
 		"contentId": contentID,
 	})
-}
-
-func parseToken(tokenStr string) (*Claims, error) {
-	return &Claims{
-		UserID: "mock_user_id",
-		Email:  "user@example.com",
-	}, nil
-}
-
-type Claims struct {
-	UserID string
-	Email  string
 }
 
 func main() {
@@ -559,7 +498,7 @@ func main() {
 				if err == nil {
 					c.Locals("userId", fmt.Sprintf("%v", claims.UserID))
 					c.Locals("fullName", claims.Email)
-					c.Locals("role", "User")
+					c.Locals("role", "user")
 					c.Locals("avatar", "")
 					return c.Next()
 				}

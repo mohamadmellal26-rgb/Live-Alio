@@ -14,9 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-
-
-// User Model مع ضبط الـ ID وتجنب مشاكل التوليد التلقائي في PostgreSQL
+// User Model المحدث ليدعم حقول اليوتيوبر والمستثمر
 type User struct {
 	ID             uint           `gorm:"primaryKey;autoIncrement" json:"id"`
 	FullName       string         `json:"fullName"`
@@ -28,16 +26,19 @@ type User struct {
 	Location       string         `json:"location"`
 	Website        string         `json:"website"`
 	TargetIndustry string         `json:"targetIndustry"`
+	YoutubeUrl     string         `json:"youtubeUrl"`   // خاص بدور Youtuber
+	PyCardId       string         `json:"pyCardId"`     // خاص بدور Investor
+	ProjectProof   string         `json:"projectProof"` // مسار ملف إثبات المشروع (PDF) للمستثمر
 	Skills         []string       `json:"skills" gorm:"serializer:json"`
 	FocusAreas     []string       `json:"focusAreas" gorm:"serializer:json"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	UpdatedAt      time.Time      `json:"updatedAt"`
 }
 
-// JWT Secret Key (يُفضل نقله إلى متغيرات البيئة Environment Variables في الإنتاج)
+// JWT Secret Key
 var jwtSecret = []byte("your-super-secret-key-change-this-in-production")
 
-// Custom Claims Structure للتعامل الآمن مع الـ JWT
+// Custom Claims Structure
 type Claims struct {
 	UserID uint   `json:"userId"`
 	Email  string `json:"email"`
@@ -80,7 +81,7 @@ func parseToken(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
-// Helper to save uploaded files (like Avatar)
+// Helper to save uploaded files (like Avatar and Project Proof)
 func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	file, err := c.FormFile(fieldName)
 	if err != nil {
@@ -102,18 +103,20 @@ func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	return fmt.Sprintf("/uploads/%s", filename), nil
 }
 
-// Signup Handler
+// Signup Handler المحدث
 func handleSignup(c *fiber.Ctx) error {
 	contentType := c.Get("Content-Type")
 
-	var fullName, email, password, role string
+	var fullName, email, password, role, youtubeUrl, pyCardId string
 
 	if strings.Contains(contentType, "application/json") {
 		type RegisterInput struct {
-			FullName string `json:"fullName"`
-			Email    string `json:"email"`
-			Password string `json:"password"`
-			Role     string `json:"role"`
+			FullName   string `json:"fullName"`
+			Email      string `json:"email"`
+			Password   string `json:"password"`
+			Role       string `json:"role"`
+			YoutubeUrl string `json:"youtubeUrl"`
+			PyCardId   string `json:"pyCardId"`
 		}
 
 		var input RegisterInput
@@ -124,15 +127,19 @@ func handleSignup(c *fiber.Ctx) error {
 		email = input.Email
 		password = input.Password
 		role = input.Role
+		youtubeUrl = input.YoutubeUrl
+		pyCardId = input.PyCardId
 	} else {
 		fullName = c.FormValue("fullName")
 		email = c.FormValue("email")
 		password = c.FormValue("password")
 		role = c.FormValue("role")
+		youtubeUrl = c.FormValue("youtubeUrl")
+		pyCardId = c.FormValue("pyCardId")
 	}
 
 	if role == "" {
-		role = "Developer"
+		role = "user"
 	}
 
 	if strings.TrimSpace(fullName) == "" || strings.TrimSpace(email) == "" || strings.TrimSpace(password) == "" {
@@ -150,17 +157,24 @@ func handleSignup(c *fiber.Ctx) error {
 	}
 
 	newUser := User{
-		FullName: fullName,
-		Email:    strings.ToLower(email),
-		Password: string(hashedPassword),
-		Role:     role,
+		FullName:   fullName,
+		Email:      strings.ToLower(email),
+		Password:   string(hashedPassword),
+		Role:       role,
+		YoutubeUrl: youtubeUrl,
+		PyCardId:   pyCardId,
 	}
 
+	// حفظ الصورة الشخصية إن وجدت
 	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
 		newUser.Avatar = avatarPath
 	}
 
-	// إدراج المستخدم في قاعدة البيانات (مع التأكد من عدم إرسال ID قيمته 0)
+	// حفظ ملف إثبات المشروع (خاص بالمستثمر) إن وجد
+	if proofPath, err := saveUploadedFile(c, "projectProof"); err == nil && proofPath != "" {
+		newUser.ProjectProof = proofPath
+	}
+
 	if err := DB.Create(&newUser).Error; err != nil {
 		log.Printf("Signup Error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to create user"})
@@ -236,7 +250,7 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 	return c.JSON(user)
 }
 
-// Update User Profile Handler
+// Update User Profile Handler المحدث
 func handleUpdateUserProfile(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -264,6 +278,8 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 			Location       string   `json:"location"`
 			Website        string   `json:"website"`
 			TargetIndustry string   `json:"targetIndustry"`
+			YoutubeUrl     string   `json:"youtubeUrl"`
+			PyCardId       string   `json:"pyCardId"`
 			Skills         []string `json:"skills"`
 			FocusAreas     []string `json:"focusAreas"`
 		}
@@ -276,6 +292,8 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 			if jsonReq.Location != "" { user.Location = jsonReq.Location }
 			if jsonReq.Website != "" { user.Website = jsonReq.Website }
 			if jsonReq.TargetIndustry != "" { user.TargetIndustry = jsonReq.TargetIndustry }
+			if jsonReq.YoutubeUrl != "" { user.YoutubeUrl = jsonReq.YoutubeUrl }
+			if jsonReq.PyCardId != "" { user.PyCardId = jsonReq.PyCardId }
 			if len(jsonReq.Skills) > 0 { user.Skills = jsonReq.Skills }
 			if len(jsonReq.FocusAreas) > 0 { user.FocusAreas = jsonReq.FocusAreas }
 		}
@@ -286,6 +304,8 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		if location := c.FormValue("location"); location != "" { user.Location = location }
 		if website := c.FormValue("website"); website != "" { user.Website = website }
 		if targetIndustry := c.FormValue("targetIndustry"); targetIndustry != "" { user.TargetIndustry = targetIndustry }
+		if youtubeUrl := c.FormValue("youtubeUrl"); youtubeUrl != "" { user.YoutubeUrl = youtubeUrl }
+		if pyCardId := c.FormValue("pyCardId"); pyCardId != "" { user.PyCardId = pyCardId }
 
 		if skillsRaw := c.FormValue("skills"); skillsRaw != "" {
 			var parsedSkills []string
@@ -304,6 +324,10 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 
 	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
 		user.Avatar = avatarPath
+	}
+
+	if proofPath, err := saveUploadedFile(c, "projectProof"); err == nil && proofPath != "" {
+		user.ProjectProof = proofPath
 	}
 
 	if err := DB.Save(&user).Error; err != nil {
