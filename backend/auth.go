@@ -105,6 +105,7 @@ func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 }
 
 // Signup Handler المحدث
+// Signup Handler المحدث
 func handleSignup(c *fiber.Ctx) error {
 	contentType := c.Get("Content-Type")
 
@@ -166,19 +167,19 @@ func handleSignup(c *fiber.Ctx) error {
 		PyCardId:   pyCardId,
 	}
 
-	// حفظ الصورة الشخصية بشكل آمن (إن وجدت) دون إيقاف التسجيل في حال الخطأ
-	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
-		newUser.Avatar = avatarPath
-	}
-
-	// حفظ ملف إثبات المشروع (خاص بالمستثمر) بشكل آمن
-	if proofPath, err := saveUploadedFile(c, "projectProof"); err == nil && proofPath != "" {
-		newUser.ProjectProof = proofPath
+	// محاولة حفظ الملفات فقط إذا لم يكن الطلب بصيغة JSON البسيطة
+	if !strings.Contains(contentType, "application/json") {
+		if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
+			newUser.Avatar = avatarPath
+		}
+		if proofPath, err := saveUploadedFile(c, "projectProof"); err == nil && proofPath != "" {
+			newUser.ProjectProof = proofPath
+		}
 	}
 
 	if err := DB.Create(&newUser).Error; err != nil {
 		log.Printf("Signup Error: %v", err)
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to create user in database: " + err.Error()})
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to create user: " + err.Error()})
 	}
 
 	token, err := generateToken(newUser)
