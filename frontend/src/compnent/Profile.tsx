@@ -17,12 +17,11 @@ import {
   Loader,
   FileText,
   Upload,
-  ExternalLink,
-  Save,
-  Camera
+  ExternalLink
 } from 'lucide-react';
 import { useUserProfile } from './hooks/useUserProfile';
 import LiveCallNotification, { type CallRequestData } from './LiveCallNotification';
+import { EditProfileModal } from './EditProfileModal';
 import './Profile.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://live-alio-1.onrender.com';
@@ -41,19 +40,25 @@ interface ContentItem {
 
 export const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
-  const { username: pathUsername } = useParams<{ username?: string }>();
+  // التقاط البرامتر سواء كان id أو username
+  const params = useParams<{ username?: string; id?: string }>();
+  const pathIdentifier = params.username || params.id;
+
   const [searchParams] = useSearchParams();
   const queryUsername = searchParams.get('user') || searchParams.get('profile') || searchParams.get('identifier');
 
-  const targetUsername = pathUsername || queryUsername || undefined;
+  const targetUsername = pathIdentifier || queryUsername || undefined;
   const { data, isLoading, error, refetch } = useUserProfile(targetUsername) as any;
+
+  // حالة محلية للبروفايل لضمان التحديث الفوري للواجهة
+  const [localProfile, setLocalProfile] = useState<any>(null);
 
   const [imgError, setImgError] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showAddContentModal, setShowAddContentModal] = useState(false);
 
   // حالات إدارة وتفاصيل المحتوى المضاف
-  const [, setContentList] = useState<ContentItem[]>([]);
+  const [contentList, setContentList] = useState<ContentItem[]>([]);
   const [selectedMedia, setSelectedMedia] = useState<ContentItem | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -67,26 +72,12 @@ export const ProfilePage: React.FC = () => {
     thumbnailFile: null as File | null
   });
 
-  // حالات بيانات التعديل الخاصة بالحساب الشخصي
-  const [editFormData, setEditFormData] = useState({
-    fullName: '',
-    role: '',
-    bio: '',
-    location: '',
-    website: '',
-    skills: '',
-    focusAreas: '',
-    targetIndustry: '',
-    avatarFile: null as File | null
-  });
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
-
   // حالات الاتصال المباشر والـ WebSockets
   const [isCalling, setIsCalling] = useState(false);
   const [incomingCall, setIncomingCall] = useState<CallRequestData | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // قراءة بيانات الجلسة الحالية بطريقة آمنة
+  // قراءة بيانات الجلسة الحالية
   const [currentUser, setCurrentUser] = useState<any>(null);
   const token = localStorage.getItem('token');
 
@@ -113,24 +104,16 @@ export const ProfilePage: React.FC = () => {
     return `${cleanBase}/${cleanPath}`;
   }, []);
 
-  const user = data?.profile || data;
-
-  // تعبئة نموذج التعديل بالبيانات الحالية عند فتح الـ Modal
+  // مزامنة الـ Data القادمة من الـ API مع الـ Local State
   useEffect(() => {
-    if (user) {
-      setEditFormData({
-        fullName: user.fullName || '',
-        role: user.role || '',
-        bio: user.bio || '',
-        location: user.location || '',
-        website: user.website || '',
-        skills: Array.isArray(user.skills) ? user.skills.join(', ') : (user.skills || ''),
-        focusAreas: Array.isArray(user.focusAreas) ? user.focusAreas.join(', ') : (user.focusAreas || ''),
-        targetIndustry: user.targetIndustry || '',
-        avatarFile: null
-      });
+    if (data) {
+      const extractedUser = data.user || data.profile || data.data || data;
+      setLocalProfile(extractedUser);
     }
-  }, [user]);
+  }, [data]);
+
+  // استخدام localProfile لضمان سرعة الاستجابة
+  const user = localProfile;
 
   // مزامنة المحتوى المستلم من الـ API
   useEffect(() => {
@@ -143,12 +126,10 @@ export const ProfilePage: React.FC = () => {
 
   // فحص حقول صورة البروفايل
   const avatarPath = 
-    user?.avatarUrl || 
     user?.avatar || 
-    user?.profilePicture || 
-    user?.photo ||
-    (data as any)?.avatarUrl ||
-    (data as any)?.avatar;
+    user?.Avatar || 
+    user?.avatarUrl || 
+    user?.profilePicture;
 
   const avatarSrc = getFullImageUrl(avatarPath);
 
@@ -180,7 +161,7 @@ export const ProfilePage: React.FC = () => {
 
         if (message.type === 'call_accepted') {
           setIsCalling(false);
-          navigate('/dashboard', { 
+          navigate('/Dashboard', { 
             state: { 
               autoConnectPeerId: message.peerId, 
               activeCallId: message.callId,
@@ -220,7 +201,7 @@ export const ProfilePage: React.FC = () => {
     );
   }
 
-  if (error || !data || !user) {
+  if (error || !user) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#ff22ff', gap: '1rem' }}>
         <ShieldCheck size={48} />
@@ -232,14 +213,16 @@ export const ProfilePage: React.FC = () => {
     );
   }
 
-  const { primaryColor = '#e056fd' } = data;
-  const targetUserId = String(user.id || user._id || '');
+  const { primaryColor = '#e056fd' } = data || {};
+  const targetUserId = String(user.id || user.ID || user._id || '');
 
+  // التحقق الفعّال مما إذا كان المستخدم هو مالك البروفايل
   const isOwner = Boolean(
     token && currentUser && (
+      !targetUsername || // زيارة /profile المباشرة
       (currentUser.id && String(currentUser.id) === targetUserId) ||
-      (currentUser._id && String(currentUser._id) === targetUserId) ||
-      (currentUser.username && user.username && currentUser.username.toLowerCase() === user.username.toLowerCase()) ||
+      (currentUser.ID && String(currentUser.ID) === targetUserId) ||
+      (currentUser.username && targetUsername && currentUser.username.toLowerCase() === targetUsername.toLowerCase()) ||
       (currentUser.email && user.email && currentUser.email.toLowerCase() === user.email.toLowerCase())
     )
   );
@@ -260,9 +243,9 @@ export const ProfilePage: React.FC = () => {
       wsRef.current.send(JSON.stringify({
         type: 'send_call_request',
         targetUserId: targetUserId,
-        callerName: currentUser?.fullName || currentUser?.username || 'مستخدم',
-        callerRole: currentUser?.role || 'User',
-        callerAvatarUrl: currentUser?.avatarUrl || currentUser?.avatar
+        callerName: currentUser?.fullName || currentUser?.FullName || 'مستخدم',
+        callerRole: currentUser?.role || currentUser?.Role || 'User',
+        callerAvatarUrl: currentUser?.avatar || currentUser?.Avatar
       }));
     } else {
       alert('خطأ في الاتصال بالخادم، يرجى إعادة المحاولة.');
@@ -278,7 +261,7 @@ export const ProfilePage: React.FC = () => {
     }
     const callerName = incomingCall?.callerName || 'Partner';
     setIncomingCall(null);
-    navigate('/dashboard', { state: { roomId: requestId, activeCallId: requestId, peerName: callerName } });
+    navigate('/Dashboard', { state: { roomId: requestId, activeCallId: requestId, peerName: callerName } });
   };
 
   const handleDeclineCall = (requestId: string) => {
@@ -291,90 +274,7 @@ export const ProfilePage: React.FC = () => {
     setIncomingCall(null);
   };
 
-  // دالة حفظ التعديلات المصححة بالكامل
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSavingProfile(true);
-
-    try {
-      const skillsArray = editFormData.skills
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
-      
-      const focusArray = editFormData.focusAreas
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
-
-      let response: Response;
-
-      if (editFormData.avatarFile) {
-        const formData = new FormData();
-        formData.append('fullName', editFormData.fullName);
-        formData.append('role', editFormData.role);
-        formData.append('bio', editFormData.bio);
-        formData.append('location', editFormData.location);
-        formData.append('website', editFormData.website);
-        formData.append('targetIndustry', editFormData.targetIndustry);
-        formData.append('skills', JSON.stringify(skillsArray));
-        formData.append('focusAreas', JSON.stringify(focusArray));
-        formData.append('avatar', editFormData.avatarFile);
-
-        response = await fetch(`${API_BASE_URL}/api/user/profile`, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          body: formData
-        });
-      } else {
-        const payload = {
-          fullName: editFormData.fullName,
-          role: editFormData.role,
-          bio: editFormData.bio,
-          location: editFormData.location,
-          website: editFormData.website,
-          targetIndustry: editFormData.targetIndustry,
-          skills: skillsArray,
-          focusAreas: focusArray
-        };
-
-        response = await fetch(`${API_BASE_URL}/api/user/profile`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify(payload)
-        });
-      }
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.message || 'Failed to update profile');
-      }
-
-      const updatedRes = await response.json();
-
-      if (currentUser) {
-        const newUserData = { ...currentUser, ...(updatedRes.user || updatedRes) };
-        localStorage.setItem('user', JSON.stringify(newUserData));
-        setCurrentUser(newUserData);
-      }
-
-      if (refetch) refetch();
-      setIsEditing(false);
-      alert('تم تحديث البروفايل بنجاح!');
-    } catch (err: any) {
-      console.error('Error updating profile:', err);
-      alert(err.message || 'حدث خطأ أثناء حفظ البيانات، يرجى المحاولة لاحقاً.');
-    } finally {
-      setIsSavingProfile(false);
-    }
-  };
-
-  // دالة رفع المحتوى إلى السيرفر
+  // دالة رفع المحتوى
   const handleUploadContent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newContent.title.trim()) {
@@ -389,8 +289,7 @@ export const ProfilePage: React.FC = () => {
       formData.append('description', newContent.description);
       formData.append('type', newContent.type);
       if (newContent.externalLink) formData.append('externalLink', newContent.externalLink);
-      if (newContent.mediaFile) formData.append('media', newContent.mediaFile);
-      if (newContent.thumbnailFile) formData.append('thumbnail', newContent.thumbnailFile);
+      if (newContent.mediaFile) formData.append('file', newContent.mediaFile);
 
       const response = await fetch(`${API_BASE_URL}/api/content/upload`, {
         method: 'POST',
@@ -405,15 +304,20 @@ export const ProfilePage: React.FC = () => {
       }
 
       const result = await response.json();
-      const createdItem: ContentItem = result.content || {
-        id: result.id || String(Date.now()),
+      const createdItem: ContentItem = result.content ? {
+        id: result.content.id,
+        title: result.content.title,
+        type: result.content.type,
+        mediaUrl: result.content.url,
+        description: newContent.description,
+        externalLink: newContent.externalLink
+      } : {
+        id: String(Date.now()),
         title: newContent.title,
         description: newContent.description,
         type: newContent.type,
         externalLink: newContent.externalLink,
-        mediaUrl: result.mediaUrl || (newContent.mediaFile ? URL.createObjectURL(newContent.mediaFile) : undefined),
-        thumbnailUrl: result.thumbnailUrl || (newContent.thumbnailFile ? URL.createObjectURL(newContent.thumbnailFile) : undefined),
-        createdAt: new Date().toISOString()
+        mediaUrl: newContent.mediaFile ? URL.createObjectURL(newContent.mediaFile) : undefined
       };
 
       setContentList((prev) => [createdItem, ...prev]);
@@ -453,7 +357,7 @@ export const ProfilePage: React.FC = () => {
                   <img 
                     key={avatarSrc}
                     src={avatarSrc} 
-                    alt={user.fullName || 'User Avatar'} 
+                    alt={user.fullName || user.FullName || 'User Avatar'} 
                     className="profile-avatar-img" 
                     style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%', border: '3px solid #1e1e24' }}
                     onError={() => setImgError(true)}
@@ -473,10 +377,10 @@ export const ProfilePage: React.FC = () => {
 
               <div className="profile-identity">
                 <h1>
-                  {user.fullName}
+                  {user.fullName || user.FullName}
                   {user.isVerified && <CheckCircle size={20} className="verified-badge" />}
                 </h1>
-                <p className="profile-role" style={{ textTransform: 'capitalize' }}>{user.role}</p>
+                <p className="profile-role" style={{ textTransform: 'capitalize' }}>{user.role || user.Role}</p>
               </div>
             </div>
 
@@ -518,52 +422,90 @@ export const ProfilePage: React.FC = () => {
           </div>
 
           <div className="profile-bio-box">
-            {user.bio && <p className="profile-bio-text">{user.bio}</p>}
+            {(user.bio || user.Bio) && <p className="profile-bio-text">{user.bio || user.Bio}</p>}
             <div className="profile-meta-row">
               {user.email && <div className="meta-item"><Mail size={15} /> {user.email}</div>}
-              {user.location && <div className="meta-item"><MapPin size={15} /> {user.location}</div>}
-              {user.website && (
+              {(user.location || user.Location) && <div className="meta-item"><MapPin size={15} /> {user.location || user.Location}</div>}
+              {(user.website || user.Website) && (
                 <div className="meta-item">
-                  <Globe size={15} /> <a href={user.website} target="_blank" rel="noreferrer" style={{ color: primaryColor, textDecoration: 'none' }}>Website / Channel</a>
+                  <Globe size={15} /> <a href={user.website || user.Website} target="_blank" rel="noreferrer" style={{ color: primaryColor, textDecoration: 'none' }}>Website / Channel</a>
                 </div>
               )}
               {user.joinedDate && <div className="meta-item"><Calendar size={15} /> Joined {user.joinedDate}</div>}
             </div>
           </div>
-
-          {user.stats && (
-            <div className="stats-ribbon">
-              {user.stats.stat1Label && (
-                <div className="stat-box">
-                  <span className="stat-number highlight" style={{ color: primaryColor }}>{user.stats.stat1Value || 0}</span>
-                  <span className="stat-label">{user.stats.stat1Label}</span>
-                </div>
-              )}
-              {user.stats.stat2Label && (
-                <div className="stat-box">
-                  <span className="stat-number">{user.stats.stat2Value || 0}</span>
-                  <span className="stat-label">{user.stats.stat2Label}</span>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
-      <div className="profile-main-layout">
-        <aside>
-          {user.targetIndustry && (
-            <div className="dark-card">
-              <h3 className="card-header-title">
+      <div className="profile-main-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '1.5rem', marginTop: '1.5rem' }}>
+        {/* قسم المحتوى والمعرض */}
+        <main className="profile-content-section">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ color: '#fff', margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <FileText size={18} style={{ color: primaryColor }} /> Content & Portfolio
+            </h3>
+            {isOwner && (
+              <button 
+                onClick={() => setShowAddContentModal(true)}
+                style={{ background: 'transparent', border: `1px solid ${primaryColor}`, color: primaryColor, padding: '0.4rem 0.8rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                <Plus size={14} /> Add New
+              </button>
+            )}
+          </div>
+
+          {contentList.length === 0 ? (
+            <div className="dark-card" style={{ textAlign: 'center', padding: '2.5rem', color: '#a1a1aa', background: '#18181c', borderRadius: '12px', border: '1px solid #27272a' }}>
+              <FileText size={40} style={{ marginBottom: '0.5rem', opacity: 0.5 }} />
+              <p style={{ margin: 0 }}>No published content or showcases yet.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
+              {contentList.map((item) => (
+                <div 
+                  key={item.id} 
+                  onClick={() => setSelectedMedia(item)}
+                  style={{ cursor: 'pointer', padding: '0.75rem', background: '#18181c', borderRadius: '10px', border: '1px solid #27272a', transition: 'transform 0.2s' }}
+                >
+                  {item.mediaUrl ? (
+                    <div style={{ height: '130px', borderRadius: '6px', overflow: 'hidden', background: '#000', marginBottom: '0.5rem' }}>
+                      {item.type === 'video' ? (
+                        <video src={getFullImageUrl(item.mediaUrl)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <img src={getFullImageUrl(item.mediaUrl)} alt={item.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ height: '130px', borderRadius: '6px', background: '#121216', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a1a1aa', marginBottom: '0.5rem' }}>
+                      <FileText size={32} />
+                    </div>
+                  )}
+                  <h4 style={{ color: '#fff', margin: '0 0 0.25rem 0', fontSize: '0.9rem' }}>{item.title}</h4>
+                  {item.description && (
+                    <p style={{ color: '#a1a1aa', fontSize: '0.78rem', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.description}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </main>
+
+        {/* الشريط الجانبي */}
+        <aside style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {(user.targetIndustry || user.TargetIndustry) && (
+            <div className="dark-card" style={{ background: '#18181c', padding: '1.25rem', borderRadius: '12px', border: '1px solid #27272a' }}>
+              <h3 className="card-header-title" style={{ color: '#fff', fontSize: '1rem', marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <ShieldCheck size={18} style={{ color: primaryColor }} /> Target & Focus
               </h3>
               <p style={{ fontSize: '0.85rem', color: '#a1a1aa', margin: '0 0 1rem 0' }}>
-                Category: <strong style={{ color: '#fff' }}>{user.targetIndustry}</strong>
+                Category: <strong style={{ color: '#fff' }}>{user.targetIndustry || user.TargetIndustry}</strong>
               </p>
-              {user.focusAreas && user.focusAreas.length > 0 && (
-                <div className="tag-cloud">
-                  {user.focusAreas.map((area: string, idx: number) => (
-                    <span key={idx} className="tech-tag" style={{ borderColor: `${primaryColor}66`, color: primaryColor }}>
+              {(user.focusAreas || user.FocusAreas) && (user.focusAreas || user.FocusAreas).length > 0 && (
+                <div className="tag-cloud" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                  {(user.focusAreas || user.FocusAreas).map((area: string, idx: number) => (
+                    <span key={idx} className="tech-tag" style={{ borderColor: `${primaryColor}66`, color: primaryColor, border: '1px solid', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem' }}>
                       {area}
                     </span>
                   ))}
@@ -572,14 +514,16 @@ export const ProfilePage: React.FC = () => {
             </div>
           )}
 
-          {user.skills && user.skills.length > 0 && (
-            <div className="dark-card">
-              <h3 className="card-header-title">
+          {(user.skills || user.Skills) && (user.skills || user.Skills).length > 0 && (
+            <div className="dark-card" style={{ background: '#18181c', padding: '1.25rem', borderRadius: '12px', border: '1px solid #27272a' }}>
+              <h3 className="card-header-title" style={{ color: '#fff', fontSize: '1rem', marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Award size={18} style={{ color: '#eab308' }} /> Tech Stack & Skills
               </h3>
-              <div className="tag-cloud">
-                {user.skills.map((skill: string, idx: number) => (
-                  <span key={idx} className="tech-tag">{skill}</span>
+              <div className="tag-cloud" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                {(user.skills || user.Skills).map((skill: string, idx: number) => (
+                  <span key={idx} className="tech-tag" style={{ background: '#27272a', color: '#d4d4d8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem' }}>
+                    {skill}
+                  </span>
                 ))}
               </div>
             </div>
@@ -587,7 +531,7 @@ export const ProfilePage: React.FC = () => {
         </aside>
       </div>
 
-      {/* Modal لعرض التفاصيل/الميديا */}
+      {/* Modal تفاصيل المحتوى */}
       {selectedMedia && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '1rem' }}>
           <div style={{ background: '#18181c', borderRadius: '12px', width: '100%', maxWidth: '800px', overflow: 'hidden', border: '1px solid #27272a', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
@@ -705,25 +649,14 @@ export const ProfilePage: React.FC = () => {
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div>
-                  <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Media File (Video/Img)</label>
-                  <input 
-                    type="file" 
-                    accept="video/*,image/*"
-                    onChange={(e) => setNewContent({ ...newContent, mediaFile: e.target.files?.[0] || null })}
-                    style={{ fontSize: '0.75rem', color: '#a1a1aa', width: '100%' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Thumbnail</label>
-                  <input 
-                    type="file" 
-                    accept="image/*"
-                    onChange={(e) => setNewContent({ ...newContent, thumbnailFile: e.target.files?.[0] || null })}
-                    style={{ fontSize: '0.75rem', color: '#a1a1aa', width: '100%' }}
-                  />
-                </div>
+              <div>
+                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Media File (Video/Img)</label>
+                <input 
+                  type="file" 
+                  accept="video/*,image/*"
+                  onChange={(e) => setNewContent({ ...newContent, mediaFile: e.target.files?.[0] || null })}
+                  style={{ fontSize: '0.75rem', color: '#a1a1aa', width: '100%' }}
+                />
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
@@ -748,154 +681,20 @@ export const ProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal تعديل البروفايل */}
-      {isEditing && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '1rem' }}>
-          <div style={{ background: '#1e1e24', padding: '1.75rem', borderRadius: '12px', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto', border: '1px solid #333' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #2a2a32', paddingBottom: '0.75rem' }}>
-              <h3 style={{ margin: 0, color: '#fff', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Edit3 size={18} style={{ color: primaryColor }} /> Edit Profile Details
-              </h3>
-              <button onClick={() => setIsEditing(false)} style={{ background: 'none', border: 'none', color: '#a1a1aa', cursor: 'pointer' }}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                  Profile Picture
-                </label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <div style={{ position: 'relative', width: '60px', height: '60px', borderRadius: '50%', overflow: 'hidden', background: '#121216', border: '1px solid #333' }}>
-                    {editFormData.avatarFile ? (
-                      <img src={URL.createObjectURL(editFormData.avatarFile)} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : (
-                      avatarSrc ? <img src={avatarSrc} alt="Current Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <UserIcon size={30} style={{ margin: '15px' }} />
-                    )}
-                  </div>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#27272a', color: '#fff', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                    <Camera size={16} /> Choose Photo
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      style={{ display: 'none' }} 
-                      onChange={(e) => setEditFormData({ ...editFormData, avatarFile: e.target.files?.[0] || null })} 
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Full Name</label>
-                  <input 
-                    type="text" 
-                    value={editFormData.fullName}
-                    onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })}
-                    style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Title / Role</label>
-                  <input 
-                    type="text" 
-                    value={editFormData.role}
-                    onChange={(e) => setEditFormData({ ...editFormData, role: e.target.value })}
-                    placeholder="e.g. Full-Stack Engineer"
-                    style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem' }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Bio</label>
-                <textarea 
-                  rows={3}
-                  value={editFormData.bio}
-                  onChange={(e) => setEditFormData({ ...editFormData, bio: e.target.value })}
-                  placeholder="Tell the community about yourself..."
-                  style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem', resize: 'vertical' }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Location</label>
-                  <input 
-                    type="text" 
-                    value={editFormData.location}
-                    onChange={(e) => setEditFormData({ ...editFormData, location: e.target.value })}
-                    placeholder="e.g. Algeria"
-                    style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Website / Link</label>
-                  <input 
-                    type="url" 
-                    value={editFormData.website}
-                    onChange={(e) => setEditFormData({ ...editFormData, website: e.target.value })}
-                    placeholder="https://..."
-                    style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem' }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Target Category / Industry</label>
-                <input 
-                  type="text" 
-                  value={editFormData.targetIndustry}
-                  onChange={(e) => setEditFormData({ ...editFormData, targetIndustry: e.target.value })}
-                  placeholder="e.g. Software & Artificial Intelligence"
-                  style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Skills (Comma Separated)</label>
-                <input 
-                  type="text" 
-                  value={editFormData.skills}
-                  onChange={(e) => setEditFormData({ ...editFormData, skills: e.target.value })}
-                  placeholder="React, Go, C++, Python"
-                  style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', color: '#d4d4d8', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Focus Areas (Comma Separated)</label>
-                <input 
-                  type="text" 
-                  value={editFormData.focusAreas}
-                  onChange={(e) => setEditFormData({ ...editFormData, focusAreas: e.target.value })}
-                  placeholder="Computer Vision, Web Architecture"
-                  style={{ width: '100%', background: '#121216', border: '1px solid #27272a', borderRadius: '6px', padding: '0.6rem 0.8rem', color: '#fff', fontSize: '0.88rem' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem', borderTop: '1px solid #2a2a32', paddingTop: '1rem' }}>
-                <button 
-                  type="button" 
-                  onClick={() => setIsEditing(false)}
-                  style={{ background: '#27272a', color: '#fff', border: 'none', padding: '0.55rem 1.2rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem' }}
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={isSavingProfile}
-                  style={{ background: primaryColor, color: '#fff', border: 'none', padding: '0.55rem 1.2rem', borderRadius: '6px', cursor: isSavingProfile ? 'not-allowed' : 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                >
-                  {isSavingProfile ? <Loader className="animate-spin" size={16} /> : <Save size={16} />}
-                  {isSavingProfile ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Modal تعديل البروفايل المنفصل */}
+      <EditProfileModal 
+        isOpen={isEditing}
+        onClose={() => setIsEditing(false)}
+        user={user}
+        token={token}
+        apiBaseUrl={API_BASE_URL}
+        primaryColor={primaryColor}
+        avatarSrc={avatarSrc}
+        currentUser={currentUser}
+        setCurrentUser={setCurrentUser}
+        setLocalProfile={setLocalProfile}
+        refetch={refetch}
+      />
     </div>
   );
 };

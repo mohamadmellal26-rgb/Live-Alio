@@ -112,7 +112,7 @@ const AppContent: React.FC = () => {
     };
 
     return () => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
     };
@@ -155,8 +155,10 @@ const AppContent: React.FC = () => {
           <Route path="/" element={<HeroSection />} />
           <Route path="/login" element={<Login />} />
           <Route path="/Dashboard" element={<Dashboard />} />
-          <Route path="/profile/:username" element={<Profile />} />
+          {/* البروفايل الشخصي بدون معرف */}
           <Route path="/profile" element={<Profile />} />
+          {/* البروفايل المخصص سواء بواسطة ID أو Username */}
+          <Route path="/profile/:id" element={<Profile />} />
         </Routes>
       </main>
 

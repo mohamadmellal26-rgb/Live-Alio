@@ -1,310 +1,306 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
+    "encoding/json"
+    "fmt"
+    "io"
+    "os"
+    "path/filepath"
+    "strings"
+    "time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
+    "github.com/gofiber/fiber/v2"
+    "github.com/golang-jwt/jwt/v5"
+    "golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret = []byte("super_secret_live_aleo_key_2026")
+// JWT Secret Key
+var jwtSecret = []byte("your-super-secret-key-change-this-in-production")
 
-// User نموذج المستخدم في قاعدة البيانات
-type User struct {
-	ID             string    `gorm:"primaryKey;type:uuid" json:"id"`
-	FullName       string    `gorm:"not null" json:"fullName"`
-	Email          string    `gorm:"uniqueIndex;not null" json:"email"`
-	Password       string    `gorm:"not null" json:"-"`
-	Role           string    `gorm:"default:'user'" json:"role"`
-	Avatar         string    `json:"avatarUrl,omitempty"`
-	Bio            string    `json:"bio,omitempty"`
-	Location       string    `json:"location,omitempty"`
-	Website        string    `json:"website,omitempty"`
-	TargetIndustry string    `json:"targetIndustry,omitempty"`
-	Skills         []string  `gorm:"serializer:json" json:"skills,omitempty"`
-	FocusAreas     []string  `gorm:"serializer:json" json:"focusAreas,omitempty"`
-	IsVerified     bool      `gorm:"default:true" json:"isVerified"`
-	JoinedDate     string    `json:"joinedDate"`
-	YoutubeUrl     string    `json:"youtubeUrl,omitempty"`
-	PyCardId       string    `json:"pyCardId,omitempty"`
-	ProjectProof   string    `json:"projectProof,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+// Custom Claims Structure
+type Claims struct {
+    UserID string `json:"userId"`
+    Email  string `json:"email"`
+    jwt.RegisteredClaims
 }
 
-type RegisterRequest struct {
-	FullName   string `json:"fullName" form:"fullName"`
-	Email      string `json:"email" form:"email"`
-	Password   string `json:"password" form:"password"`
-	Role       string `json:"role" form:"role"`
-	YoutubeUrl string `json:"youtubeUrl,omitempty" form:"youtubeUrl"`
-	PyCardId   string `json:"pyCardId,omitempty" form:"pyCardId"`
+// Helper to generate JWT Token
+func generateToken(user User) (string, error) {
+    claims := jwt.MapClaims{
+        "userId": user.ID,
+        "email":  user.Email,
+        "exp":    time.Now().Add(time.Hour * 72).Unix(), // Expires in 3 days
+        "iat":    time.Now().Unix(),
+    }
+
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    return token.SignedString(jwtSecret)
 }
 
-type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-func generateToken(user *User) (string, error) {
-	claims := jwt.MapClaims{
-		"userId":    user.ID,
-		"email":     user.Email,
-		"fullName":  user.FullName,
-		"role":      user.Role,
-		"avatarUrl": user.Avatar,
-		"exp":       time.Now().Add(time.Hour * 72).Unix(),
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
-}
-
+// Helper to parse JWT Token
 func parseToken(tokenStr string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
-	})
-	if err != nil || !token.Valid {
-		return nil, err
-	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return nil, fiber.ErrUnauthorized
-	}
-	return claims, nil
+    token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+        }
+        return jwtSecret, nil
+    })
+
+    if err != nil || !token.Valid {
+        return nil, fmt.Errorf("invalid token")
+    }
+
+    claims, ok := token.Claims.(jwt.MapClaims)
+    if !ok {
+        return nil, fmt.Errorf("invalid claims")
+    }
+
+    return claims, nil
 }
 
-func saveUploadedFile(c *fiber.Ctx, formKey string) (string, error) {
-	file, err := c.FormFile(formKey)
-	if err != nil {
-		return "", nil
-	}
+// Helper to save uploaded files (like Avatar)
+func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
+    file, err := c.FormFile(fieldName)
+    if err != nil {
+        return "", err
+    }
 
-	uploadDir := "./uploads"
-	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-		return "", err
-	}
+    // Create uploads directory if it doesn't exist
+    uploadDir := "./uploads"
+    if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+        return "", err
+    }
 
-	ext := filepath.Ext(file.Filename)
-	filename := fmt.Sprintf("%s_%d%s", uuid.New().String(), time.Now().UnixNano(), ext)
-	savePath := filepath.Join(uploadDir, filename)
+    // Generate unique filename
+    filename := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(file.Filename))
+    filePath := filepath.Join(uploadDir, filename)
 
-	if err := c.SaveFile(file, savePath); err != nil {
-		return "", err
-	}
+    // Save file to destination
+    if err := c.SaveFile(file, filePath); err != nil {
+        return "", err
+    }
 
-	return "/uploads/" + filename, nil
+    // Return public URL path
+    return fmt.Sprintf("/uploads/%s", filename), nil
 }
 
-func handleSignup(c *fiber.Ctx) error {
-	var req RegisterRequest
+// Register Handler
+func handleRegister(c *fiber.Ctx) error {
+    type RegisterInput struct {
+        FullName string `json:"fullName"`
+        Email    string `json:"email"`
+        Password string `json:"password"`
+    }
 
-	if err := c.BodyParser(&req); err != nil {
-		req.FullName = c.FormValue("fullName")
-		req.Email = c.FormValue("email")
-		req.Password = c.FormValue("password")
-		req.Role = c.FormValue("role")
-		req.YoutubeUrl = c.FormValue("youtubeUrl")
-		req.PyCardId = c.FormValue("pyCardId")
-	}
+    var input RegisterInput
+    if err := c.BodyParser(&input); err != nil {
+        return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+    }
 
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+    // Validate inputs
+    if strings.TrimSpace(input.FullName) == "" || strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.Password) == "" {
+        return c.Status(400).JSON(fiber.Map{"error": "All fields are required"})
+    }
 
-	if req.Email == "" || req.Password == "" || req.FullName == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "Missing required fields"})
-	}
+    // Check if user already exists
+    var existingUser User
+    if err := DB.Where("email = ?", strings.ToLower(input.Email)).First(&existingUser).Error; err == nil {
+        return c.Status(400).JSON(fiber.Map{"error": "Email already registered"})
+    }
 
-	if req.Role == "" {
-		req.Role = "user"
-	}
+    // Hash password
+    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+    if err != nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Failed to hash password"})
+    }
 
-	var existingUser User
-	if err := DB.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
-		return c.Status(400).JSON(fiber.Map{"error": "Email already exists"})
-	}
+    // Create new user record
+    newUser := User{
+        FullName: input.FullName,
+        Email:    strings.ToLower(input.Email),
+        Password: string(hashedPassword),
+        Role:     "Developer", // Default role
+    }
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to process password"})
-	}
+    if err := DB.Create(&newUser).Error; err != nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Failed to create user"})
+    }
 
-	avatarPath, _ := saveUploadedFile(c, "avatar")
-	proofPath, _ := saveUploadedFile(c, "projectProof")
+    // Generate JWT Token
+    token, err := generateToken(newUser)
+    if err != nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Failed to generate auth token"})
+    }
 
-	newUser := User{
-		ID:           uuid.New().String(),
-		FullName:     req.FullName,
-		Email:        req.Email,
-		Password:     string(hashedPassword),
-		Role:         req.Role,
-		Avatar:       avatarPath,
-		Bio:          "Full-Stack Software Engineer & Platform Innovator",
-		JoinedDate:   time.Now().Format("Jan 2006"),
-		IsVerified:   true,
-		YoutubeUrl:   req.YoutubeUrl,
-		PyCardId:     req.PyCardId,
-		ProjectProof: proofPath,
-	}
-
-	if err := DB.Create(&newUser).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to create user in database"})
-	}
-
-	token, err := generateToken(&newUser)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to generate token"})
-	}
-
-	return c.Status(201).JSON(fiber.Map{
-		"token": token,
-		"user":  newUser,
-	})
+    return c.Status(201).JSON(fiber.Map{
+        "message": "User registered successfully",
+        "token":   token,
+        "user":    newUser,
+    })
 }
 
+// Login Handler
 func handleLogin(c *fiber.Ctx) error {
-	var req LoginRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
-	}
+    type LoginInput struct {
+        Email    string `json:"email"`
+        Password string `json:"password"`
+    }
 
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+    var input LoginInput
+    if err := c.BodyParser(&input); err != nil {
+        return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+    }
 
-	var user User
-	if err := DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(401).JSON(fiber.Map{"error": "Invalid email or password"})
-		}
-		return c.Status(500).JSON(fiber.Map{"error": "Database error"})
-	}
+    if strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.Password) == "" {
+        return c.Status(400).JSON(fiber.Map{"error": "Email and password are required"})
+    }
 
-	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)) != nil {
-		return c.Status(401).JSON(fiber.Map{"error": "Invalid email or password"})
-	}
+    var user User
+    if err := DB.Where("email = ?", strings.ToLower(input.Email)).First(&user).Error; err != nil {
+        return c.Status(401).JSON(fiber.Map{"error": "Invalid email or password"})
+    }
 
-	token, err := generateToken(&user)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to generate token"})
-	}
+    // Check password match
+    if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+        return c.Status(401).JSON(fiber.Map{"error": "Invalid email or password"})
+    }
 
-	return c.JSON(fiber.Map{
-		"token": token,
-		"user":  user,
-	})
+    // Generate JWT Token
+    token, err := generateToken(user)
+    if err != nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Failed to generate auth token"})
+    }
+
+    return c.JSON(fiber.Map{
+        "message": "Login successful",
+        "token":   token,
+        "user":    user,
+    })
 }
 
-func handleGetUserProfile(c *fiber.Ctx) error {
-	identifier := strings.TrimSpace(c.Query("identifier"))
-	if identifier == "" {
-		identifier = strings.TrimSpace(c.Query("user"))
-	}
+// Get Current User Profile Handler
+func handleGetProfile(c *fiber.Ctx) error {
+    authHeader := c.Get("Authorization")
+    if !strings.HasPrefix(authHeader, "Bearer ") {
+        return c.Status(401).JSON(fiber.Map{"error": "Unauthorized"})
+    }
 
-	var foundUser User
+    tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+    claims, err := parseToken(tokenStr)
+    if err != nil {
+        return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
+    }
 
-	if identifier != "" {
-		DB.Where("LOWER(email) = ? OR id = ? OR LOWER(full_name) = ?",
-			strings.ToLower(identifier), identifier, strings.ToLower(identifier)).First(&foundUser)
-	}
+    userID, ok := claims["userId"].(string)
+    if !ok || userID == "" {
+        return c.Status(401).JSON(fiber.Map{"error": "Invalid token payload"})
+    }
 
-	if foundUser.ID == "" {
-		authHeader := c.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-			if claims, err := parseToken(tokenStr); err == nil {
-				if email, ok := claims["email"].(string); ok {
-					DB.Where("email = ?", email).First(&foundUser)
-				}
-			}
-		}
-	}
+    var user User
+    if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
+        return c.Status(404).JSON(fiber.Map{"error": "User not found"})
+    }
 
-	if foundUser.ID == "" {
-		DB.First(&foundUser)
-	}
-
-	if foundUser.ID == "" {
-		return c.Status(404).JSON(fiber.Map{"error": "User not found"})
-	}
-
-	return c.JSON(fiber.Map{
-		"profile":      foundUser,
-		"contents":     []interface{}{},
-		"primaryColor": "#e056fd",
-	})
+    return c.JSON(user)
 }
 
+// Update User Profile Handler (Supports both JSON & Multipart Form Data)
 func handleUpdateUserProfile(c *fiber.Ctx) error {
-	authHeader := c.Get("Authorization")
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return c.Status(401).JSON(fiber.Map{"error": "Unauthorized"})
-	}
+    authHeader := c.Get("Authorization")
+    if !strings.HasPrefix(authHeader, "Bearer ") {
+        return c.Status(401).JSON(fiber.Map{"error": "Unauthorized"})
+    }
 
-	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := parseToken(tokenStr)
-	if err != nil {
-		return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
-	}
+    tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+    claims, err := parseToken(tokenStr)
+    if err != nil {
+        return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
+    }
 
-	userID, ok := claims["userId"].(string)
-	if !ok || userID == "" {
-		return c.Status(401).JSON(fiber.Map{"error": "Invalid token payload"})
-	}
+    userID, ok := claims["userId"].(string)
+    if !ok || userID == "" {
+        return c.Status(401).JSON(fiber.Map{"error": "Invalid token payload"})
+    }
 
-	var user User
-	if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "User not found"})
-	}
+    var user User
+    if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
+        return c.Status(404).JSON(fiber.Map{"error": "User not found"})
+    }
 
-	if fullName := c.FormValue("fullName"); fullName != "" {
-		user.FullName = fullName
-	}
-	if role := c.FormValue("role"); role != "" {
-		user.Role = role
-	}
-	if bio := c.FormValue("bio"); bio != "" {
-		user.Bio = bio
-	}
-	if location := c.FormValue("location"); location != "" {
-		user.Location = location
-	}
-	if website := c.FormValue("website"); website != "" {
-		user.Website = website
-	}
-	if targetIndustry := c.FormValue("targetIndustry"); targetIndustry != "" {
-		user.TargetIndustry = targetIndustry
-	}
+    contentType := c.Get("Content-Type")
 
-	if skillsRaw := c.FormValue("skills"); skillsRaw != "" {
-		var parsedSkills []string
-		if err := json.Unmarshal([]byte(skillsRaw), &parsedSkills); err == nil {
-			user.Skills = parsedSkills
-		}
-	}
+    // معالجة البيانات بناءً على نوع الـ Content-Type لضمان قراءتها بشكل صحيح
+    if strings.Contains(contentType, "application/json") {
+        type UpdateProfileJSON struct {
+            FullName       string   `json:"fullName"`
+            Role           string   `json:"role"`
+            Bio            string   `json:"bio"`
+            Location       string   `json:"location"`
+            Website        string   `json:"website"`
+            TargetIndustry string   `json:"targetIndustry"`
+            Skills         []string `json:"skills"`
+            FocusAreas     []string `json:"focusAreas"`
+        }
 
-	if focusRaw := c.FormValue("focusAreas"); focusRaw != "" {
-		var parsedFocus []string
-		if err := json.Unmarshal([]byte(focusRaw), &parsedFocus); err == nil {
-			user.FocusAreas = parsedFocus
-		}
-	}
+        var jsonReq UpdateProfileJSON
+        if err := c.BodyParser(&jsonReq); err == nil {
+            if jsonReq.FullName != "" { user.FullName = jsonReq.FullName }
+            if jsonReq.Role != "" { user.Role = jsonReq.Role }
+            if jsonReq.Bio != "" { user.Bio = jsonReq.Bio }
+            if jsonReq.Location != "" { user.Location = jsonReq.Location }
+            if jsonReq.Website != "" { user.Website = jsonReq.Website }
+            if jsonReq.TargetIndustry != "" { user.TargetIndustry = jsonReq.TargetIndustry }
+            if len(jsonReq.Skills) > 0 { user.Skills = jsonReq.Skills }
+            if len(jsonReq.FocusAreas) > 0 { user.FocusAreas = jsonReq.FocusAreas }
+        }
+    } else {
+        // معالجة البيانات القادمة كـ Multipart/Form-Data (عند رفع صورة أو بيانات نموذجية)
+        if fullName := c.FormValue("fullName"); fullName != "" {
+            user.FullName = fullName
+        }
+        if role := c.FormValue("role"); role != "" {
+            user.Role = role
+        }
+        if bio := c.FormValue("bio"); bio != "" {
+            user.Bio = bio
+        }
+        if location := c.FormValue("location"); location != "" {
+            user.Location = location
+        }
+        if website := c.FormValue("website"); website != "" {
+            user.Website = website
+        }
+        if targetIndustry := c.FormValue("targetIndustry"); targetIndustry != "" {
+            user.TargetIndustry = targetIndustry
+        }
 
-	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
-		user.Avatar = avatarPath
-	}
+        if skillsRaw := c.FormValue("skills"); skillsRaw != "" {
+            var parsedSkills []string
+            if err := json.Unmarshal([]byte(skillsRaw), &parsedSkills); err == nil {
+                user.Skills = parsedSkills
+            }
+        }
 
-	if err := DB.Save(&user).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to update profile"})
-	}
+        if focusRaw := c.FormValue("focusAreas"); focusRaw != "" {
+            var parsedFocus []string
+            if err := json.Unmarshal([]byte(focusRaw), &parsedFocus); err == nil {
+                user.FocusAreas = parsedFocus
+            }
+        }
+    }
 
-	return c.JSON(fiber.Map{
-		"message": "Profile updated successfully",
-		"user":    user,
-	})
+    // تحديث ملف الصورة إذا وجد
+    if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
+        user.Avatar = avatarPath
+    }
+
+    // حفظ البيانات المحدثة في القاعدة
+    if err := DB.Save(&user).Error; err != nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Failed to update profile"})
+    }
+
+    return c.JSON(fiber.Map{
+        "message": "Profile updated successfully",
+        "user":    user,
+    })
 }
