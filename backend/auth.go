@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,14 +12,36 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
+
+// Global DB variable (تأكد من تهيئته في ملف الـ Database الخاص بك)
+var DB *gorm.DB
+
+// User Model مع ضبط الـ ID ليتولد تلقائياً (Auto Increment) لتجنب خطأ الـ Null Constraint
+type User struct {
+	ID             uint           `gorm:"primaryKey;autoIncrement" json:"id"`
+	FullName       string         `json:"fullName"`
+	Email          string         `json:"email" gorm:"unique"`
+	Password       string         `json:"-"`
+	Role           string         `json:"role"`
+	Avatar         string         `json:"avatar"`
+	Bio            string         `json:"bio"`
+	Location       string         `json:"location"`
+	Website        string         `json:"website"`
+	TargetIndustry string         `json:"targetIndustry"`
+	Skills         []string       `json:"skills" gorm:"serializer:json"`
+	FocusAreas     []string       `json:"focusAreas" gorm:"serializer:json"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
+}
 
 // JWT Secret Key
 var jwtSecret = []byte("your-super-secret-key-change-this-in-production")
 
 // Custom Claims Structure
 type Claims struct {
-	UserID string `json:"userId"`
+	UserID uint   `json:"userId"`
 	Email  string `json:"email"`
 	jwt.RegisteredClaims
 }
@@ -83,8 +106,7 @@ func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	return fmt.Sprintf("/uploads/%s", filename), nil
 }
 
-// Signup Handler (تم تصحيح الاسم ليكون متوافقاً مع main.go)
-// Signup Handler (يدعم JSON و Multipart Form-Data مع دعم الصورة الشخصية)
+// Signup Handler (يدعم JSON و Multipart Form-Data مع حفظ الصورة الشخصية)
 func handleSignup(c *fiber.Ctx) error {
 	contentType := c.Get("Content-Type")
 
@@ -107,7 +129,7 @@ func handleSignup(c *fiber.Ctx) error {
 		password = input.Password
 		role = input.Role
 	} else {
-		// استقبال البيانات المرسلة عبر FormData (عند رفع صورة أو بيانات نموذجية)
+		// استقبال البيانات المرسلة عبر FormData
 		fullName = c.FormValue("fullName")
 		email = c.FormValue("email")
 		password = c.FormValue("password")
@@ -204,7 +226,7 @@ func handleLogin(c *fiber.Ctx) error {
 	})
 }
 
-// Get Current User Profile Handler (تم تصحيح الاسم ليكون handleGetUserProfile)
+// Get Current User Profile Handler
 func handleGetUserProfile(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -217,10 +239,12 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
 	}
 
-	userID, ok := claims["userId"].(string)
-	if !ok || userID == "" {
+	// تحويل الـ ID قادماً من الـ JWT map claims بأمان إلى uint
+	idFloat, ok := claims["userId"].(float64)
+	if !ok {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid token payload"})
 	}
+	userID := uint(idFloat)
 
 	var user User
 	if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
@@ -243,10 +267,11 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
 	}
 
-	userID, ok := claims["userId"].(string)
-	if !ok || userID == "" {
+	idFloat, ok := claims["userId"].(float64)
+	if !ok {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid token payload"})
 	}
+	userID := uint(idFloat)
 
 	var user User
 	if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
@@ -280,7 +305,7 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 			if len(jsonReq.FocusAreas) > 0 { user.FocusAreas = jsonReq.FocusAreas }
 		}
 	} else {
-		// معالجة البيانات القادمة كـ Multipart/Form-Data (عند رفع صورة أو بيانات نموذجية)
+		// معالجة البيانات القادمة كـ Multipart/Form-Data
 		if fullName := c.FormValue("fullName"); fullName != "" {
 			user.FullName = fullName
 		}
@@ -329,4 +354,21 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		"message": "Profile updated successfully",
 		"user":    user,
 	})
+}
+
+func main() {
+	app := fiber.New()
+
+	// تفعيل مسار الملفات المرفوعة لعرض الصور
+	app.Static("/uploads", "./uploads")
+
+	// مسارات الـ API
+	api := app.Group("/api/v1")
+	api.Post("/signup", handleSignup)
+	api.Post("/login", handleLogin)
+	api.Get("/profile", handleGetUserProfile)
+	api.Put("/profile", handleUpdateUserProfile)
+
+	// تشغيل الخادم على المنفذ 10000 (المناسب لـ Render)
+	log.Fatal(app.Listen(":10000"))
 }
