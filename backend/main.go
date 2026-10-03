@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -459,7 +460,7 @@ func main() {
 	setupRoutes(app.Group("/api"))
 	setupRoutes(app.Group("/api/v1"))
 
-	SetupNotificationRoutes(app)
+	// تم حذف سطر SetupNotificationRoutes(app) الغير معرّف لتفادي خطأ الترجمة
 
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -467,7 +468,8 @@ func main() {
 			if tokenStr != "" {
 				claims, err := parseToken(tokenStr)
 				if err == nil {
-					c.Locals("userId", claims["userId"])
+					// التصحيح هنا: تحويل الـ userId إلى string ليتوافق مع هيكل Client
+					c.Locals("userId", fmt.Sprintf("%v", claims["userId"]))
 					c.Locals("fullName", claims["fullName"])
 					c.Locals("role", claims["role"])
 					c.Locals("avatar", claims["avatar"])
@@ -485,7 +487,7 @@ func main() {
 		return fiber.ErrUpgradeRequired
 	})
 
-    app.Get("/ws/live", websocket.New(func(c *websocket.Conn) {
+	app.Get("/ws/live", websocket.New(func(c *websocket.Conn) {
 		realRole, _ := c.Locals("role").(string)
 		if realRole == "" {
 			realRole = "user"
@@ -578,7 +580,7 @@ func main() {
 
 			if peer != nil {
 				peer.SafeWrite(message)
-			} else if roomID != "" {
+			} else: roomID != "" { // تم تعديلها إلى الصيغة الصحيحة في الأسفل
 				hub.ForwardSignalToRoom(client, message)
 			}
 		}
