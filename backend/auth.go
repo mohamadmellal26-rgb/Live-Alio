@@ -5,18 +5,18 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// User Model المحدث ليدعم حقول اليوتيوبر والمستثمر
+// User Model المحدث بـ ID من نوع UUID (string)
 type User struct {
-	ID             uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	ID             string    `gorm:"primaryKey;type:varchar(36)" json:"id"`
 	FullName       string    `json:"fullName"`
 	Email          string    `json:"email" gorm:"unique;index"`
 	Password       string    `json:"-"`
@@ -38,9 +38,9 @@ type User struct {
 // JWT Secret Key
 var jwtSecret = []byte("your-super-secret-key-change-this-in-production")
 
-// Custom Claims Structure
+// Custom Claims Structure محدث ليدعم UserID كـ string
 type Claims struct {
-	UserID uint   `json:"userId"`
+	UserID string `json:"userId"`
 	Email  string `json:"email"`
 	jwt.RegisteredClaims
 }
@@ -81,7 +81,7 @@ func parseToken(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
-// Helper to save uploaded files (like Avatar and Project Proof)
+// Helper to save uploaded files
 func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	file, err := c.FormFile(fieldName)
 	if err != nil {
@@ -103,7 +103,7 @@ func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 	return fmt.Sprintf("/uploads/%s", filename), nil
 }
 
-// Signup Handler المحدث
+// Signup Handler المحدث مع توليد UUID فريد
 func handleSignup(c *fiber.Ctx) error {
 	contentType := c.Get("Content-Type")
 
@@ -156,7 +156,11 @@ func handleSignup(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to hash password"})
 	}
 
+	// إنشاء الرمز الفريد UUID v4
+	uniqueUserID := uuid.New().String()
+
 	newUser := User{
+		ID:         uniqueUserID,
 		FullName:   fullName,
 		Email:      strings.ToLower(email),
 		Password:   string(hashedPassword),
@@ -249,7 +253,7 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 	return c.JSON(user)
 }
 
-// Get Public User Profile by ID or Email (Public Endpoint)
+// Get Public User Profile by ID (UUID) or Email (Public Endpoint)
 func handleGetUserByID(c *fiber.Ctx) error {
 	identifier := c.Params("id")
 	if identifier == "" {
@@ -265,15 +269,9 @@ func handleGetUserByID(c *fiber.Ctx) error {
 	var user User
 	var err error
 
-	// 1. إذا كان المدخل رقماً، ابحث بالـ ID فقط
-	if id, parseErr := strconv.Atoi(identifier); parseErr == nil {
-		err = DB.Where("id = ?", id).First(&user).Error
-	} else {
-		// 2. إذا لم يكن رقماً، ابحث بالإيميل فقط
-		err = DB.Where("LOWER(email) = ?", strings.ToLower(identifier)).First(&user).Error
-	}
+	// البحث بالـ UUID أو البريد الإلكتروني بشكل تلقائي ومباشر
+	err = DB.Where("id = ? OR LOWER(email) = ?", identifier, strings.ToLower(identifier)).First(&user).Error
 
-	// 3. إذا فشل العثور على المستخدم (غير موجود)، أرجع خطأ مباشرة ولا ترجع للبروفايل الشخصي
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "فشل الوصول: المستخدم غير موجود",
@@ -282,13 +280,12 @@ func handleGetUserByID(c *fiber.Ctx) error {
 
 	user.Password = "" // إخفاء كلمة المرور للعامة
 
-	// 4. في حال النجاح فقط، قم بإرجاع بيانات البروفايل
 	return c.JSON(fiber.Map{
 		"user": user,
 	})
 }
 
-// Update User Profile Handler المحدث
+// Update User Profile Handler
 func handleUpdateUserProfile(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -387,15 +384,15 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 	}
 
 	if proofPath, err := saveUploadedFile(c, "projectProof"); err == nil && proofPath != "" {
-		user.ProjectProof = proofPath
-	}
+        user.ProjectProof = proofPath
+    }
 
-	if err := DB.Save(&user).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to update profile"})
-	}
+    if err := DB.Save(&user).Error; err != nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Failed to update profile"})
+    }
 
-	return c.JSON(fiber.Map{
-		"message": "Profile updated successfully",
-		"user":    user,
-	})
+    return c.JSON(fiber.Map{
+        "message": "Profile updated successfully",
+        "user":    user,
+    })
 }

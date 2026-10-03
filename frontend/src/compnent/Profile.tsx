@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   Zap, 
   Globe, 
@@ -17,7 +17,8 @@ import {
   Loader,
   FileText,
   Upload,
-  ExternalLink
+  ExternalLink,
+  AlertCircle
 } from 'lucide-react';
 import { useUserProfile } from './hooks/useUserProfile';
 import LiveCallNotification from './LiveCallNotification';
@@ -48,15 +49,18 @@ export interface CallRequestData {
 
 export const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
-  const location = useLocation();
   const params = useParams<{ username?: string; id?: string }>();
 
-  // استخراج المعرف مباشرة من البارامترات
+  // استخراج المعرف المباشر من المسار
   const pathIdentifier = params.id || params.username;
-
   const [searchParams] = useSearchParams();
   const queryUsername = searchParams.get('user') || searchParams.get('profile') || searchParams.get('identifier');
 
+  // المعرف القادم صراحة من الـ URL
+  const explicitTarget = pathIdentifier || queryUsername;
+
+  // جلب التوكين والمستخدم كـ State تفاعلية
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
   const [currentUser, setCurrentUser] = useState<any>(() => {
     const storedUserRaw = localStorage.getItem('user');
     if (storedUserRaw) {
@@ -70,17 +74,28 @@ export const ProfilePage: React.FC = () => {
     return null;
   });
 
-  // تحديد المعرف المستهدف بدقة
-  const targetIdentifierRaw = pathIdentifier || queryUsername;
-  const isExactSelfProfileRoute = location.pathname.replace(/\/+$/, '') === '/profile';
-  
-  const targetUsername = targetIdentifierRaw || (
-    isExactSelfProfileRoute && currentUser 
-      ? String(currentUser.id || currentUser.ID || currentUser.username) 
-      : undefined
-  );
+  // مزامنة التوكين والمستخدم عند تغيير Session/LocalStorage
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setToken(localStorage.getItem('token'));
+      const storedUserRaw = localStorage.getItem('user');
+      if (storedUserRaw) {
+        try {
+          setCurrentUser(JSON.parse(storedUserRaw));
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    };
 
-  // جلب بيانات البروفايل بناءً على المعرف المستهدف
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // تجميد المعرف المستهدف
+  const targetUsername = explicitTarget || (currentUser ? String(currentUser.id || currentUser.ID || currentUser.username) : undefined);
+
+  // جلب بيانات البروفايل بناءً على المعرف المحدد
   const { data, isLoading, error, refetch } = useUserProfile(targetUsername) as any;
 
   const [localProfile, setLocalProfile] = useState<any>(null);
@@ -105,20 +120,6 @@ export const ProfilePage: React.FC = () => {
   const [incomingCall, setIncomingCall] = useState<CallRequestData | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const token = localStorage.getItem('token');
-
-  useEffect(() => {
-    const storedUserRaw = localStorage.getItem('user');
-    if (storedUserRaw) {
-      try {
-        setCurrentUser(JSON.parse(storedUserRaw));
-      } catch (e) {
-        console.error('Failed to parse user session:', e);
-        setCurrentUser(null);
-      }
-    }
-  }, []);
-
   const getFullImageUrl = useCallback((path?: string) => {
     if (!path || typeof path !== 'string') return '';
     if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
@@ -129,49 +130,56 @@ export const ProfilePage: React.FC = () => {
     return `${cleanBase}/${cleanPath}`;
   }, []);
 
-  // تحديث البروفايل المحلي فور استلام البيانات الجديدة
+  // تحديث البروفايل المحلي فور وصول البيانات
   useEffect(() => {
-    if (data) {
+    if (data && !error) {
       const extractedUser = data.user || data.profile || data.data || data;
       setLocalProfile(extractedUser);
-    } else {
+    } else if (error) {
       setLocalProfile(null);
     }
-  }, [data, targetUsername]);
+  }, [data, error]);
 
   const user = localProfile;
 
-  // مزامنة قائمة المحتوى القادمة من الـ API
+  // مزامنة قائمة المحتوى
   useEffect(() => {
-    const rawContents = data?.contents || data?.profile?.contents || data?.data?.contents;
-    if (Array.isArray(rawContents)) {
-      setContentList(rawContents);
+    if (user) {
+      const rawContents = data?.contents || data?.profile?.contents || data?.data?.contents || user?.contents;
+      if (Array.isArray(rawContents)) {
+        setContentList(rawContents);
+      }
     }
-  }, [data]);
+  }, [data, user]);
 
-  const avatarPath = 
-    user?.avatar || 
-    user?.Avatar || 
-    user?.avatarUrl || 
-    user?.profilePicture;
-
+  const avatarPath = user?.avatar || user?.Avatar || user?.avatarUrl || user?.profilePicture;
   const avatarSrc = getFullImageUrl(avatarPath);
 
   useEffect(() => {
     setImgError(false);
   }, [avatarSrc, targetUsername]);
 
-  // الاتصال بـ WebSocket
+  // الاتصال بـ WebSocket مع حفظ الاتصال (Keep-Alive)
   useEffect(() => {
-    if (!token) return;
+    const activeToken = token || localStorage.getItem('token');
+    if (!activeToken) return;
 
-    const wsUrl = `wss://live-alio-1.onrender.com/ws/live?token=${token}`;
+    const wsUrl = `wss://live-alio-1.onrender.com/ws/live?token=${activeToken}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+
+    // Ping دوري لمنع انقطاع السيرفر على Render
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 25000);
 
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
+
+        if (message.type === 'pong') return;
 
         if (message.type === 'incoming_call_request') {
           setIncomingCall({
@@ -210,6 +218,7 @@ export const ProfilePage: React.FC = () => {
     };
 
     return () => {
+      clearInterval(pingInterval);
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close();
       }
@@ -219,38 +228,59 @@ export const ProfilePage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#fff' }}>
-        <p>Loading profile...</p>
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#fff', gap: '1rem' }}>
+        <Loader className="animate-spin" size={36} style={{ color: '#e056fd' }} />
+        <p style={{ color: '#a1a1aa' }}>جاري تحميل الملف الشخصي...</p>
       </div>
     );
   }
 
   if (error || !user) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#ff22ff', gap: '1rem' }}>
-        <ShieldCheck size={48} />
-        <h2>Profile Not Found</h2>
-        <p style={{ color: '#a1a1aa' }}>
-          {targetUsername ? `User "${targetUsername}" does not exist.` : 'Please check the profile link.'}
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#121216', color: '#fff', gap: '1.2rem', padding: '1rem', textAlign: 'center' }}>
+        <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', padding: '1.5rem', borderRadius: '50%' }}>
+          <AlertCircle size={56} style={{ color: '#ef4444' }} />
+        </div>
+        <h2 style={{ fontSize: '1.8rem', margin: 0, fontWeight: 700 }}>فشل الوصول للملف الشخصي</h2>
+        <p style={{ color: '#a1a1aa', maxWidth: '420px', margin: 0, fontSize: '0.95rem', lineHeight: 1.6 }}>
+          {explicitTarget ? `المستخدم "${explicitTarget}" غير موجود أو تم إزالة حسابه.` : 'تعذر تحميل البروفايل المطلوب.'}
         </p>
+        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+          <button 
+            onClick={() => navigate('/')}
+            style={{ background: '#27272a', color: '#fff', border: '1px solid #3f3f46', padding: '0.65rem 1.4rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem' }}
+          >
+            الرئيسية
+          </button>
+          {currentUser && (
+            <button 
+              onClick={() => navigate('/profile')}
+              style={{ background: '#e056fd', color: '#fff', border: 'none', padding: '0.65rem 1.4rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}
+            >
+              ملفي الشخصي
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
   const { primaryColor = '#e056fd' } = data || {};
-  const targetUserId = String(user.id || user.ID || user._id || '');
+  const targetUserId = String(user.id || user.ID || user._id || user.username || '');
 
   const isOwner = Boolean(
     token && currentUser && targetUserId && (
       (currentUser.id && String(currentUser.id) === targetUserId) ||
       (currentUser.ID && String(currentUser.ID) === targetUserId) ||
       (currentUser._id && String(currentUser._id) === targetUserId) ||
-      (currentUser.username && targetUsername && currentUser.username.toLowerCase() === targetUsername.toLowerCase())
+      (currentUser.username && String(currentUser.username) === targetUserId) ||
+      (currentUser.email && user.email && currentUser.email.toLowerCase() === user.email.toLowerCase())
     )
   );
 
   const handleConnectClick = () => {
-    if (!token) {
+    const activeToken = token || localStorage.getItem('token');
+    if (!activeToken) {
       alert('يرجى تسجيل الدخول أولاً للاتصال بالمستخدم.');
       navigate('/login');
       return;
@@ -266,6 +296,7 @@ export const ProfilePage: React.FC = () => {
       wsRef.current.send(JSON.stringify({
         type: 'send_call_request',
         targetUserId: targetUserId,
+        callerId: String(currentUser?.id || currentUser?.ID || currentUser?._id || ''),
         callerName: currentUser?.fullName || currentUser?.FullName || 'مستخدم',
         callerRole: currentUser?.role || currentUser?.Role || 'User',
         callerAvatarUrl: currentUser?.avatar || currentUser?.Avatar
@@ -313,10 +344,11 @@ export const ProfilePage: React.FC = () => {
       if (newContent.externalLink) formData.append('externalLink', newContent.externalLink);
       if (newContent.mediaFile) formData.append('file', newContent.mediaFile);
 
+      const activeToken = token || localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/content/upload`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${activeToken}`
         },
         body: formData
       });
@@ -326,8 +358,6 @@ export const ProfilePage: React.FC = () => {
       }
 
       const result = await response.json();
-      
-      // استخراج الكائن المرفوع باختلاف الاستجابة من الباك إند
       const rawItem = result.content || result.data || result;
       const createdItem: ContentItem = {
         id: String(rawItem.id || rawItem._id || Date.now()),
@@ -338,10 +368,8 @@ export const ProfilePage: React.FC = () => {
         externalLink: rawItem.externalLink || newContent.externalLink
       };
 
-      // تحديث الواجهة فوراً
       setContentList((prev) => [createdItem, ...prev]);
 
-      // إعادة الاستعلام من الـ API لمنع التضارب وضمان مزامنة البيانات
       if (typeof refetch === 'function') {
         refetch();
       }
@@ -713,7 +741,7 @@ export const ProfilePage: React.FC = () => {
           isOpen={isEditing}
           onClose={() => setIsEditing(false)}
           user={user}
-          token={token}
+          token={token || localStorage.getItem('token')}
           apiBaseUrl={API_BASE_URL}
           primaryColor={primaryColor}
           avatarSrc={avatarSrc}

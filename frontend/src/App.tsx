@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import './App.css';
 
-// ملاحظة: تأكد من اسم المجلد إذا كان component أو compnent
 import Header from './compnent/header';
 import HeroSection from './compnent/hirosenction';
 import Footer from './compnent/Footer';
@@ -16,9 +15,17 @@ const AppContent: React.FC = () => {
   const [incomingCall, setIncomingCall] = useState<CallRequestData | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const token = localStorage.getItem('token');
+  // إدارة التوكين ديناميكياً لتحديث الاتصال عند تسجيل الدخول أو الخروج
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
 
-  // دالة تحديث أيقونة الموقع (Favicon) ديناميكياً وإضافة/إزالة النقطة الخضراء
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setToken(localStorage.getItem('token'));
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
   const updateFaviconWithGreenDot = useCallback((showDot: boolean) => {
     const favicon = document.querySelector<HTMLLinkElement>("link[rel*='icon']");
     if (!favicon) return;
@@ -41,41 +48,46 @@ const AppContent: React.FC = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      // 1. رسم الشعار الأصلي
       ctx.drawImage(img, 0, 0, size, size);
 
-      // 2. إعدادات النقطة الخضراء في أعلى اليمين
       const dotRadius = 10;
       const dotX = size - dotRadius - 2;
       const dotY = dotRadius + 2;
 
-      // رسم إطار أبيض عازل
       ctx.beginPath();
       ctx.arc(dotX, dotY, dotRadius + 2, 0, 2 * Math.PI);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
 
-      // رسم النقطة الخضراء
       ctx.beginPath();
       ctx.arc(dotX, dotY, dotRadius, 0, 2 * Math.PI);
       ctx.fillStyle = '#22c55e';
       ctx.fill();
 
-      // 3. تطبيق الصورة الجديدة للـ Favicon
       favicon.href = canvas.toDataURL('image/png');
     };
   }, []);
 
   useEffect(() => {
-    if (!token) return;
+    const activeToken = token || localStorage.getItem('token');
+    if (!activeToken) return;
 
-    const wsUrl = `wss://live-alio-1.onrender.com/ws/live?token=${token}`;
+    const wsUrl = `wss://live-alio-1.onrender.com/ws/live?token=${activeToken}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+
+    // إرسال Ping كل 25 ثانية لمنع Render من قطع اتصال WebSocket الخامل
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 25000);
 
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
+
+        if (message.type === 'pong') return; // تجاهل استجابة الـ Ping
 
         if (message.type === 'incoming_call_request') {
           setIncomingCall({
@@ -86,12 +98,10 @@ const AppContent: React.FC = () => {
             note: message.note || 'Hello! This user wants to start a direct call with you.'
           });
 
-          // تفعيل النقطة الخضراء على أيقونة التبويب
           updateFaviconWithGreenDot(true);
         }
 
         if (message.type === 'call_accepted') {
-          // إزالة النقطة الخضراء
           updateFaviconWithGreenDot(false);
 
           navigate('/Dashboard', { 
@@ -104,7 +114,6 @@ const AppContent: React.FC = () => {
         }
 
         if (message.type === 'call_declined') {
-          // إزالة النقطة الخضراء
           updateFaviconWithGreenDot(false);
           alert(message.message || 'Call was declined by the user.');
         }
@@ -114,6 +123,7 @@ const AppContent: React.FC = () => {
     };
 
     return () => {
+      clearInterval(pingInterval);
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
@@ -130,7 +140,6 @@ const AppContent: React.FC = () => {
     }
     const callerName = incomingCall?.callerName || 'Partner';
 
-    // إعادة الأيقونة لحالتها الأصلية عند القبول
     updateFaviconWithGreenDot(false);
     setIncomingCall(null);
     navigate('/Dashboard', { state: { roomId: requestId, activeCallId: requestId, peerName: callerName } });
@@ -144,7 +153,6 @@ const AppContent: React.FC = () => {
       }));
     }
 
-    // إعادة الأيقونة لحالتها الأصلية عند الرفض
     updateFaviconWithGreenDot(false);
     setIncomingCall(null);
   };
@@ -158,7 +166,6 @@ const AppContent: React.FC = () => {
           <Route path="/" element={<HeroSection />} />
           <Route path="/login" element={<Login />} />
           <Route path="/Dashboard" element={<Dashboard />} />
-          {/* البروفايل المخصص لأي مستخدم سواء عن طريق ID أو Username */}
           <Route path="/profile/:id" element={<Profile />} />
         </Routes>
       </main>

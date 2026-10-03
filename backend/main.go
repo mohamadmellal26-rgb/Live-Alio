@@ -366,7 +366,6 @@ func (h *Hub) UnregisterClient(client *Client) {
 		})
 		peer.SafeWrite(disconnectMsg)
 		
-		// إعادة مطابقة القرين بأمان
 		h.matchClientUnlocked(peer)
 	}
 
@@ -450,10 +449,10 @@ func main() {
 
 	app.Use(logger.New())
 	app.Use(cors.New(cors.Config{
-        AllowOrigins: "*",
-        AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-        AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
-    }))
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
+	}))
 
 	app.Static("/uploads", "./uploads")
 
@@ -525,7 +524,6 @@ func main() {
 
 		hub.RegisterClient(client)
 
-		// الـ Writer Goroutine
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -540,7 +538,7 @@ func main() {
 			hub.UnregisterClient(client)
 			client.Close()
 			c.Close()
-			<-done // انتظار انتهاء الـ writer goroutine بأمان
+			<-done
 		}()
 
 		for {
@@ -551,6 +549,13 @@ func main() {
 
 			var sig SignalMessage
 			if err := json.Unmarshal(message, &sig); err == nil {
+				// التعامل مع رسالة الحفاظ على الاتصال (ping)
+				if sig.Type == "ping" {
+					pongMsg, _ := json.Marshal(map[string]string{"type": "pong"})
+					client.SafeWrite(pongMsg)
+					continue
+				}
+
 				switch sig.Type {
 				case "send_call_request":
 					hub.HandleSendCallRequest(client, sig)
