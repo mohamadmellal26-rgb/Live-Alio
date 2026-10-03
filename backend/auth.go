@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -10,15 +9,9 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
-
-
 
 // User Model المحدث ليدعم حقول اليوتيوبر والمستثمر
 type User struct {
@@ -255,21 +248,28 @@ func handleGetUserProfile(c *fiber.Ctx) error {
 	return c.JSON(user)
 }
 
-// Get Public User Profile by ID (Public Endpoint)
+// Get Public User Profile by ID or Username (Public Endpoint)
 func handleGetUserByID(c *fiber.Ctx) error {
-	id := c.Params("id")
-	if id == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "User ID is required"})
+	identifier := c.Params("id")
+	if identifier == "" {
+		identifier = c.Params("username")
+	}
+
+	if identifier == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "User ID or Username is required"})
 	}
 
 	var user User
-	if err := DB.Where("id = ?", id).First(&user).Error; err != nil {
+	// البحث سواء حسب المعرف الرقمي أو البريد أو الاسم
+	if err := DB.Where("id = ? OR LOWER(email) = ?", identifier, strings.ToLower(identifier)).First(&user).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "User not found"})
 	}
 
 	user.Password = "" // إخفاء كلمة المرور للعامة
 
-	return c.JSON(user)
+	return c.JSON(fiber.Map{
+		"user": user,
+	})
 }
 
 // Update User Profile Handler المحدث
@@ -364,20 +364,6 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		if pyCardId := c.FormValue("pyCardId"); pyCardId != "" {
 			user.PyCardId = pyCardId
 		}
-
-		if skillsRaw := c.FormValue("skills"); skillsRaw != "" {
-			var parsedSkills []string
-			if err := json.Unmarshal([]byte(skillsRaw), &parsedSkills); err == nil {
-				user.Skills = parsedSkills
-			}
-		}
-
-		if focusRaw := c.FormValue("focusAreas"); focusRaw != "" {
-			var parsedFocus []string
-			if err := json.Unmarshal([]byte(focusRaw), &parsedFocus); err == nil {
-				user.FocusAreas = parsedFocus
-			}
-		}
 	}
 
 	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
@@ -396,54 +382,4 @@ func handleUpdateUserProfile(c *fiber.Ctx) error {
 		"message": "Profile updated successfully",
 		"user":    user,
 	})
-}
-
-func main() {
-	_ = os.MkdirAll("./uploads", os.ModePerm)
-
-	// تهيئة اتصال قاعدة البيانات
-	InitDB()
-
-	app := fiber.New(fiber.Config{
-		AppName:   "Live-Aleo API",
-		BodyLimit: 50 * 1024 * 1024,
-	})
-
-	app.Use(logger.New())
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
-	}))
-
-	app.Static("/uploads", "./uploads")
-
-	// نقطة فحص الصحة للسيرفر تجنباً لأخطاء 404
-	app.Get("/", func(c *fiber.Ctx) error {
-		return c.Status(200).JSON(fiber.Map{
-			"status":  "online",
-			"message": "Live-Aleo API is running",
-		})
-	})
-
-	setupRoutes := func(router fiber.Router) {
-		router.Post("/signup", handleSignup)
-		router.Post("/login", handleLogin)
-		router.Get("/user/profile", handleGetUserProfile)
-		router.Get("/user/:id", handleGetUserByID)
-		router.Put("/user/profile", handleUpdateUserProfile)
-	}
-
-	setupRoutes(app.Group("/api"))
-	setupRoutes(app.Group("/api/v1"))
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	log.Printf("Server running on port :%s", port)
-	if err := app.Listen(":" + port); err != nil {
-		log.Fatalf("Error starting server: %v", err)
-	}
 }
