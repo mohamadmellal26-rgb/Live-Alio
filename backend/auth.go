@@ -84,41 +84,68 @@ func saveUploadedFile(c *fiber.Ctx, fieldName string) (string, error) {
 }
 
 // Signup Handler (تم تصحيح الاسم ليكون متوافقاً مع main.go)
+// Signup Handler (يدعم JSON و Multipart Form-Data مع دعم الصورة الشخصية)
 func handleSignup(c *fiber.Ctx) error {
-	type RegisterInput struct {
-		FullName string `json:"fullName"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
+	contentType := c.Get("Content-Type")
+
+	var fullName, email, password, role string
+
+	if strings.Contains(contentType, "application/json") {
+		type RegisterInput struct {
+			FullName string `json:"fullName"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+		}
+
+		var input RegisterInput
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		fullName = input.FullName
+		email = input.Email
+		password = input.Password
+		role = input.Role
+	} else {
+		// استقبال البيانات المرسلة عبر FormData (عند رفع صورة أو بيانات نموذجية)
+		fullName = c.FormValue("fullName")
+		email = c.FormValue("email")
+		password = c.FormValue("password")
+		role = c.FormValue("role")
 	}
 
-	var input RegisterInput
-	if err := c.BodyParser(&input); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+	if role == "" {
+		role = "Developer" // القيمة الافتراضية
 	}
 
 	// Validate inputs
-	if strings.TrimSpace(input.FullName) == "" || strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.Password) == "" {
+	if strings.TrimSpace(fullName) == "" || strings.TrimSpace(email) == "" || strings.TrimSpace(password) == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "All fields are required"})
 	}
 
 	// Check if user already exists
 	var existingUser User
-	if err := DB.Where("email = ?", strings.ToLower(input.Email)).First(&existingUser).Error; err == nil {
+	if err := DB.Where("email = ?", strings.ToLower(email)).First(&existingUser).Error; err == nil {
 		return c.Status(400).JSON(fiber.Map{"error": "Email already registered"})
 	}
 
 	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to hash password"})
 	}
 
 	// Create new user record
 	newUser := User{
-		FullName: input.FullName,
-		Email:    strings.ToLower(input.Email),
+		FullName: fullName,
+		Email:    strings.ToLower(email),
 		Password: string(hashedPassword),
-		Role:     "Developer", // Default role
+		Role:     role,
+	}
+
+	// معالجة وحفظ صورة البروفايل إذا تم رفعها أثناء التسجيل
+	if avatarPath, err := saveUploadedFile(c, "avatar"); err == nil && avatarPath != "" {
+		newUser.Avatar = avatarPath
 	}
 
 	if err := DB.Create(&newUser).Error; err != nil {
