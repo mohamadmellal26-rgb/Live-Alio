@@ -15,8 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Global DB variable (تأكد من إسناد قيمة DB في ملف التهيئة الرئيسي لديك مثل database.go)
-var DB *gorm.DB
+
 
 // User Model مع ضبط الـ ID وتجنب مشاكل التوليد التلقائي في PostgreSQL
 type User struct {
