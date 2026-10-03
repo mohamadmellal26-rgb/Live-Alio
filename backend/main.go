@@ -368,9 +368,7 @@ func main() {
 	}
 
 	log.Printf("Live-Aleo backend running on port :%s", port)
-	// حفظ المستخدم في قاعدة البيانات PostgreSQL
-if err := DB.Create(&newUser).Error; err != nil {
-    log.Printf("🔴 DB Create User Error: %v", err) // طباعة السبب الحقيقي للخطأ في سيرفر Render
-    return c.Status(500).JSON(fiber.Map{"error": "Failed to create user in database"})
-}
+	if err := app.Listen(":" + port); err != nil {
+		log.Fatalf("Error starting server: %v", err)
+	}
 }
